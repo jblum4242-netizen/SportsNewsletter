@@ -13,6 +13,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 from googlenewsdecoder import gnewsdecoder
+import subprocess
 
 from epl_analytics import fetch_epl_xg_form, fetch_epl_head_to_head, fetch_epl_injuries, fetch_epl_team_metrics
 
@@ -813,52 +814,17 @@ def build_dynamic_html():
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
     
-    # Initialize the core HTML wrapper
-    html = "<html><body style='font-family: Arial, sans-serif; background-color: #f7fafc; padding: 20px; color: #1a202c;'>"
-        
-    # ---------------------------------------------------------
-    # 1. FAVORITE TEAMS SECTION 
-    # ---------------------------------------------------------
-    FAVORITE_TEAMS = {
-        "Philadelphia Eagles": 'Philadelphia Eagles News',
-        "UCLA Bruins men's basketball": "UCLA Bruins Men's Basketball News",
-        "Tottenham Hotspur": 'Tottenham Hotspur News',
-        "Delaware Blue Hens": 'Delaware Blue Hens Football News'
-    }
-    html += f"<h3 style='border-bottom: 2px solid #38a169; padding-bottom: 5px; color: #1a365d;'>🦅 My Squads</h3>"
-    html += f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
-    
-    for team_name, search_query in FAVORITE_TEAMS.items():
-        articles = fetch_team_news(search_query) 
-        encoded_fallback = urllib.parse.quote(search_query)
-        google_search_url = f"https://www.google.com/search?q={encoded_fallback}&tbm=nws"
-        
-        html += f"<h4 style='margin: 10px 0 5px 0; color: #2d3748; font-size: 14px;'>{team_name}</h4>"
-        
-        if articles:
-            html += "<ul style='margin: 0; padding-left: 20px; font-size: 12px;'>"
-            for art in articles:
-                display_title = art['title'][:80] + '...' if len(art['title']) > 80 else art['title']
-                html += f"<li style='margin-bottom: 4px;'><a href='{art['link']}' target='_blank' style='color: #2b6cb0; text-decoration: none;'>{display_title}</a></li>"
-            html += "</ul>"
-        else:
-            html += f"<div style='color: #a0aec0; font-size: 12px; padding-left: 5px; font-style: italic;'>No relevant new articles found from the last 72 hours.</div>"
-            
-        html += f"<div style='margin-top: 5px; margin-bottom: 12px; font-size: 11px; padding-left: 5px;'><a href='{google_search_url}' target='_blank' style='color: #4a5568;'>↳ Search all news for this team</a></div>"
-        
-    html += "</div>"
-
     # ---------------------------------------------------------
     # SMART 24-HOUR CACHE & PRE-COMPILING GAME SLATES 
     # ---------------------------------------------------------
-    future_limit = now_eastern + datetime.timedelta(days=5)
+    # Updated to 7 days to capture full weekends
+    future_limit = now_eastern + datetime.timedelta(days=7)
     league_slates = {} 
     
     cache_file = "C:\\Users\\jblum\\Python\\SportsNewsletter\\raw_odds_cache.json"
     cached_raw_odds = {}
     cache_is_fresh = False
 
-    # Check if cache file exists and was modified in the last 12 hours
     if os.path.exists(cache_file):
         try:
             file_age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
@@ -874,7 +840,6 @@ def build_dynamic_html():
         covers_data = fetch_covers_consensus(league)
         tv_data = fetch_tv_networks(league)
         
-        # Check if the league key exists in cache (even if value is an empty list [])
         if cache_is_fresh and league in cached_raw_odds:
             raw_odds = cached_raw_odds[league]
             print(f"📦 [CACHE] Using cached odds for {league}.")
@@ -910,27 +875,56 @@ def build_dynamic_html():
             
         league_slates[league] = final_display_list
 
-    # Persist the full dictionary to disk
     try:
         with open(cache_file, 'w') as f:
             json.dump(cached_raw_odds, f)
     except Exception as e:
         print(f"Cache Write Error: {e}")
 
-    # --- SWEEP ESPN & PREPARE CALENDAR ROWS ---
+    # ---------------------------------------------------------
+    # 1. BUILD FAVORITE TEAMS HTML (Tab: News)
+    # ---------------------------------------------------------
+    FAVORITE_TEAMS = {
+        "Philadelphia Eagles": 'Philadelphia Eagles News',
+        "Delaware Blue Hens": 'Delaware Blue Hens Football News',
+        "UCLA Bruins men's basketball": "UCLA Bruins Men's Basketball News",
+        "Tottenham Hotspur": 'Tottenham Hotspur News'
+    }
+    
+    news_html = "<div id='tab-news' class='tab-content'>"
+    news_html += f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
+    
+    for team_name, search_query in FAVORITE_TEAMS.items():
+        articles = fetch_team_news(search_query) 
+        encoded_fallback = urllib.parse.quote(search_query)
+        google_search_url = f"https://www.google.com/search?q={encoded_fallback}&tbm=nws"
+        
+        news_html += f"<h4 style='margin: 10px 0 5px 0; color: #2d3748; font-size: 14px;'>{team_name}</h4>"
+        if articles:
+            news_html += "<ul style='margin: 0; padding-left: 20px; font-size: 12px;'>"
+            for art in articles:
+                display_title = art['title'][:80] + '...' if len(art['title']) > 80 else art['title']
+                news_html += f"<li style='margin-bottom: 4px;'><a href='{art['link']}' target='_blank' style='color: #2b6cb0; text-decoration: none;'>{display_title}</a></li>"
+            news_html += "</ul>"
+        else:
+            news_html += f"<div style='color: #a0aec0; font-size: 12px; padding-left: 5px; font-style: italic;'>No relevant new articles found from the last 72 hours.</div>"
+        news_html += f"<div style='margin-top: 5px; margin-bottom: 12px; font-size: 11px; padding-left: 5px;'><a href='{google_search_url}' target='_blank' style='color: #4a5568;'>↳ Search all news for this team</a></div>"
+    news_html += "</div></div>"
+
+    # ---------------------------------------------------------
+    # 2. BUILD GAME CALENDARS HTML (Tab: Schedule)
+    # ---------------------------------------------------------
     all_monitored_games = []
     for league, games in league_slates.items():
         for game in games:
             away_name = game['matchup'].split(' vs. ')[0]
             live_feed, real_status = get_live_espn_score(league, away_name)
-            
             game_time = game.get('game_datetime', now_eastern)
             if real_status == 'completed' and now_eastern < game_time:
                 real_status = 'upcoming'
                 live_feed = None
                 
             game['real_status'] = real_status 
-            
             date_str = game.get('date')
             if not date_str and game.get('game_datetime'):
                 date_str = game['game_datetime'].strftime("%A, %b %d")
@@ -942,90 +936,60 @@ def build_dynamic_html():
                 "matchup": game['matchup'],
                 "time": game.get('tv_info', 'TBD'),
                 "network": game.get('network', ''),
-                "commence_time": game.get('commence_time', ''), 
                 "game_datetime": game.get('game_datetime', now_eastern),
                 "date_header_str": date_str,
                 "real_status": real_status,
                 "live_feed": live_feed
             })
 
-    # ---------------------------------------------------------
-    # 2. THE GAME CALENDARS (Separated & Cleaned)
-    # ---------------------------------------------------------
     def render_calendar_section(games_list, section_title, section_icon, section_color):
-        if not games_list:
-            return ""
-            
+        if not games_list: return ""
         games_list.sort(key=lambda x: x['game_datetime'])
-        
         chtml = f"<h3 style='border-bottom: 2px solid {section_color}; padding-bottom: 5px; color: #1a365d; margin-top: 20px;'>{section_icon} {section_title}</h3>"
-        chtml += f"<div style='background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px;'>"
+        chtml += f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
         chtml += "<table style='width: 100%; font-size: 12px; border-collapse: collapse;'>"
         
         current_date_header = None
         for g in games_list:
-            game_date_str = g['date_header_str']
-            
-            if game_date_str != current_date_header:
-                current_date_header = game_date_str
-                chtml += f'''
-                <tr style="background-color: #f2f4f7;">
-                    <td colspan="3" style="padding: 6px 8px; font-weight: bold; color: #334155; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; border-top: { "none" if current_date_header == games_list[0]['date_header_str'] else "1px solid #e2e8f0" };">
-                        📅 {current_date_header}
-                    </td>
-                </tr>
-                '''
+            if g['date_header_str'] != current_date_header:
+                current_date_header = g['date_header_str']
+                chtml += f'<tr style="background-color: #f2f4f7;"><td colspan="3" style="padding: 6px 8px; font-weight: bold; color: #334155; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid #e2e8f0;">📅 {current_date_header}</td></tr>'
 
             tv_station = f" ({g['network']})" if g['network'] else ""
-            
-            if g['real_status'] in ['completed', 'in_progress'] and g['live_feed']:
-                matchup_display = f"<span style='color: #e53e3e; font-weight: bold;'>{g['live_feed']}</span>"
-            else:
-                matchup_display = f"{g['matchup']}<span style='color: #e53e3e; font-weight: bold;'>{tv_station}</span>"
-            
-            chtml += f"<tr style='border-bottom: 1px solid #edf2f7;'>"
-            chtml += f"  <td style='padding: 6px 8px; color: #4a5568; font-weight: bold; width: 20%;'>{g['time']}</td>"
-            chtml += f"  <td style='padding: 6px 8px; color: #e53e3e; font-weight: bold; width: 15%;'>[{g['league']}]</td>"
-            chtml += f"  <td style='padding: 6px 8px; color: #2d3748;'>{matchup_display}</td>"
-            chtml += f"</tr>"
-            
+            matchup_display = f"<span style='color: #e53e3e; font-weight: bold;'>{g['live_feed']}</span>" if (g['real_status'] in ['completed', 'in_progress'] and g['live_feed']) else f"{g['matchup']}<span style='color: #e53e3e; font-weight: bold;'>{tv_station}</span>"
+            chtml += f"<tr style='border-bottom: 1px solid #edf2f7;'><td style='padding: 6px 8px; color: #4a5568; font-weight: bold; width: 20%;'>{g['time']}</td><td style='padding: 6px 8px; color: #e53e3e; font-weight: bold; width: 15%;'>[{g['league']}]</td><td style='padding: 6px 8px; color: #2d3748;'>{matchup_display}</td></tr>"
         chtml += "</table></div>"
         return chtml
 
+    schedule_html = "<div id='tab-schedule' class='tab-content'>"
     regular_games = [g for g in all_monitored_games if g['league'].upper() != 'EPL']
     soccer_games = [g for g in all_monitored_games if g['league'].upper() == 'EPL']
 
     if not regular_games and not soccer_games:
-        html += f"<h3 style='border-bottom: 2px solid #4a5568; padding-bottom: 5px; color: #1a365d;'>📅 Game Calendar</h3>"
-        html += f"<div style='background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px;'>"
-        html += f"<span style='color: #a0aec0; font-size: 12px;'>No monitored sports scheduled for the next 5 days.</span>"
-        html += "</div>"
+        schedule_html += f"<div style='background: #fff; padding: 15px; border-radius: 8px;'><span style='color: #a0aec0;'>No monitored sports scheduled for the next 7 days.</span></div>"
     else:
-        html += render_calendar_section(regular_games, "Game Calendar", "📅", "#4a5568")
-        html += render_calendar_section(soccer_games, "Soccer Schedule", "⚽", "#38a169")
+        schedule_html += render_calendar_section(regular_games, "Game Calendar", "📅", "#4a5568")
+        schedule_html += render_calendar_section(soccer_games, "Soccer Schedule", "⚽", "#38a169")
+    schedule_html += "</div>"
 
     # ---------------------------------------------------------
-    # 3. UPCOMING LEAGUE BOARDS (Only shows games that haven't started)
+    # 3. BUILD UPCOMING LEAGUE BOARDS (Dynamic Tabs)
     # ---------------------------------------------------------
     def render_game_block(game, league):
+        # [KEEP YOUR EXACT render_game_block CODE HERE]
         block_html = f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
         main_title = f"{league}: {game['matchup']}"
-                    
         away_team, home_team = game['matchup'].split(' vs. ')
 
         if league.upper() == "EPL":
             away_last_5_data = fetch_epl_xg_form(away_team)
             home_last_5_data = fetch_epl_xg_form(home_team)
             h2h_data = fetch_epl_head_to_head(away_team, home_team)
-            
-            # Fetch KenPom-style metrics
             away_metrics = fetch_epl_team_metrics(away_team)
             home_metrics = fetch_epl_team_metrics(home_team)
-            
             away_last_5_html = build_xg_form_html(away_team, away_last_5_data, away_metrics)
             home_last_5_html = build_xg_form_html(home_team, home_last_5_data, home_metrics)
             h2h_html = build_h2h_html(h2h_data)
-
             away_injuries = fetch_epl_injuries(away_team)
             home_injuries = fetch_epl_injuries(home_team)
         else:
@@ -1037,77 +1001,114 @@ def build_dynamic_html():
             away_injuries = ""
             home_injuries = ""
         
-        block_html += f"<div style='display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;'>"
-        block_html += f"<h4 style='margin: 0; font-size: 16px; color: #2d3748; font-weight: 700; width: 65%;'>{main_title}</h4>"
+        block_html += f"<div style='display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;'><h4 style='margin: 0; font-size: 16px; color: #2d3748; font-weight: 700; width: 65%;'>{main_title}</h4><div style='text-align: right; min-width: 120px;'><span style='background: #edf2f7; color: #4a5568; font-size: 11px; padding: 4px 8px; border-radius: 4px; font-weight: bold;'>{game['tv_info']}</span>"
+        if game.get('network'): block_html += f"<br><span style='color: #e53e3e; font-size: 11px; font-weight: 900; display: inline-block; margin-top: 6px;'>📺 {game.get('network')}</span>"
+        block_html += f"</div></div><table style='width: 100%; font-size: 13px; border-collapse: collapse;'><tr><td style='padding: 6px 0; color: #718096; width: 28%;'>FanDuel Lines:</td><td style='font-weight: bold; color: #1a202c;'>{game['odds']}</td></tr>"
         
-        block_html += f"<div style='text-align: right; min-width: 120px;'>"
-        block_html += f"<span style='background: #edf2f7; color: #4a5568; font-size: 11px; padding: 4px 8px; border-radius: 4px; font-weight: bold;'>{game['tv_info']}</span>"
-        if game.get('network'): 
-            block_html += f"<br><span style='color: #e53e3e; font-size: 11px; font-weight: 900; display: inline-block; margin-top: 6px;'>📺 {game.get('network')}</span>"
-        block_html += f"</div></div>" 
-        
-        block_html += f"<table style='width: 100%; font-size: 13px; border-collapse: collapse;'>"
-        block_html += f"<tr><td style='padding: 6px 0; color: #718096; width: 28%;'>FanDuel Lines:</td><td style='font-weight: bold; color: #1a202c;'>{game['odds']}</td></tr>"
-        
-        if "MLB" in league.upper():
-            pitchers = game.get('pitchers', 'TBD vs TBD') 
-            block_html += f"<tr><td style='padding: 6px 0; color: #718096;'>Probable Pitchers:</td><td style='color: #2b6cb0; font-weight: bold;'>⚾ {pitchers}</td></tr>"
+        if "MLB" in league.upper(): block_html += f"<tr><td style='padding: 6px 0; color: #718096;'>Probable Pitchers:</td><td style='color: #2b6cb0; font-weight: bold;'>⚾ {game.get('pitchers', 'TBD vs TBD')}</td></tr>"
+        if league.upper() != "EPL": block_html += f"<tr><td style='padding: 6px 0; color: #718096;'>Covers Consensus:</td><td>{format_consensus(game['covers'])}</td></tr>"
             
-        if league.upper() != "EPL":
-            styled_consensus = format_consensus(game['covers'])
-            block_html += f"<tr><td style='padding: 6px 0; color: #718096;'>Covers Consensus:</td><td>{styled_consensus}</td></tr>"
-            
-        block_html += f"<tr><td style='padding: 6px 0; color: #718096; font-weight: bold; vertical-align: top;'>Global News:</td><td>{game.get('news_html', '')}</td></tr>"
-        block_html += f"</table>"
+        block_html += f"<tr><td style='padding: 6px 0; color: #718096; font-weight: bold; vertical-align: top;'>Global News:</td><td>{game.get('news_html', '')}</td></tr></table>"
         
-        # Only print generic injury HTML if it's NOT EPL
-        if league.upper() != "EPL":
-            block_html += game.get('injury_html', '')
-            
-        # Assemble Team Blocks
-        if league.upper() == "EPL":
-            block_html += away_injuries
-            block_html += away_last_5_html
-            block_html += home_injuries
-            block_html += home_last_5_html
+        if league.upper() != "EPL": block_html += game.get('injury_html', '')
+        if league.upper() == "EPL": block_html += away_injuries + away_last_5_html + home_injuries + home_last_5_html
         else:
             block_html += away_last_5_html
-            if "MLB" in league.upper() and game.get('away_pitcher_logs'):
-                block_html += game['away_pitcher_logs']
+            if "MLB" in league.upper() and game.get('away_pitcher_logs'): block_html += game['away_pitcher_logs']
             block_html += home_last_5_html
-            if "MLB" in league.upper() and game.get('home_pitcher_logs'):
-                block_html += game['home_pitcher_logs']
+            if "MLB" in league.upper() and game.get('home_pitcher_logs'): block_html += game['home_pitcher_logs']
             
         block_html += h2h_html
-        
-        if league.upper() == "EPL":
-            fd_url = "https://sportsbook.fanduel.com/soccer/english-premier-league"
-        else:
-            fd_url = f"https://sportsbook.fanduel.com/navigation/{league.lower()}"
-            
-        block_html += f"<a href='{fd_url}' style='display: block; background-color: #00aeef; color: white; text-align: center; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px; margin-top: 15px;'>Open {league} Market on FanDuel App 📲</a>"
-        block_html += f"</div>"
+        fd_url = "https://sportsbook.fanduel.com/soccer/english-premier-league" if league.upper() == "EPL" else f"https://sportsbook.fanduel.com/navigation/{league.lower()}"
+        block_html += f"<a href='{fd_url}' style='display: block; background-color: #00aeef; color: white; text-align: center; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px; margin-top: 15px;'>Open {league} Market on FanDuel App 📲</a></div>"
         return block_html
 
+    boards_html = ""
+    dynamic_nav_buttons = ""
+    
     for league, games in league_slates.items():
         upcoming_games = [g for g in games if g.get('real_status', 'upcoming') == 'upcoming']
-        
         if not upcoming_games:
             continue 
             
-        html += f"<h3 style='border-bottom: 2px solid #00aeef; padding-bottom: 5px; color: #1a365d; margin-top: 30px;'>🏆 {league} Board</h3>"
-        
+        l_id = league.lower()
+        dynamic_nav_buttons += f"<button class='tab-btn' id='btn-{l_id}' onclick=\"switchTab('{l_id}')\">🏆 {league}</button>"
+        boards_html += f"<div id='tab-{l_id}' class='tab-content'>"
         for game in upcoming_games:
-            html += render_game_block(game, league)
+            boards_html += render_game_block(game, league)
+        boards_html += "</div>"
 
-    html += "</body></html>"
-    return html
+    # ---------------------------------------------------------
+    # 4. ASSEMBLE FINAL HTML WITH CSS & JS
+    # ---------------------------------------------------------
+    final_html = f"""
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {{ font-family: Arial, sans-serif; background-color: #f7fafc; padding: 10px 20px; color: #1a202c; margin: 0; }}
+            .tab-nav {{ display: flex; gap: 4px; overflow-x: auto; padding-bottom: 0px; border-bottom: 2px solid #cbd5e0; margin-bottom: 20px; white-space: nowrap; }}
+            .tab-btn {{ background-color: #edf2f7; border: 1px solid #cbd5e0; border-bottom: none; padding: 12px 16px; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: bold; color: #4a5568; font-size: 14px; margin-bottom: -2px; transition: 0.2s; }}
+            .tab-btn:hover {{ background-color: #e2e8f0; }}
+            .tab-btn.active {{ background-color: #fff; color: #2b6cb0; border-top: 3px solid #2b6cb0; border-left: 1px solid #cbd5e0; border-right: 1px solid #cbd5e0; border-bottom: 2px solid #fff; padding-top: 10px; z-index: 10; }}
+            .tab-content {{ display: none; }}
+        </style>
+    </head>
+    <body>
+        <div class="tab-nav">
+            <button class="tab-btn" id="btn-schedule" onclick="switchTab('schedule')">📅 Schedule</button>
+            <button class="tab-btn" id="btn-news" onclick="switchTab('news')">🦅 Squads News</button>
+            {dynamic_nav_buttons}
+        </div>
+        
+        {schedule_html}
+        {news_html}
+        {boards_html}
+
+        <script>
+            function switchTab(tabName) {{
+                document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+                document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+                
+                const target = document.getElementById('tab-' + tabName);
+                const btn = document.getElementById('btn-' + tabName);
+                
+                if (target) target.style.display = 'block';
+                if (btn) btn.classList.add('active');
+                
+                // Set URL hash so refreshing stays on the same tab
+                window.location.hash = tabName;
+            }}
+
+            window.addEventListener('DOMContentLoaded', () => {{
+                let currentHash = window.location.hash.replace('#', '');
+                // Fallback to schedule if hash is empty or invalid
+                if (!currentHash || !document.getElementById('tab-' + currentHash)) {{
+                    currentHash = 'schedule';
+                }}
+                switchTab(currentHash);
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    return final_html
 
 ##End of Dynamic HTML Block
 
-def send_daily_email():
-    html_content = build_dynamic_html()
-    
+def push_to_github():
+    """Pushes the updated index.html to GitHub Pages automatically."""
+    try:
+        repo_dir = r"C:\Users\jblum\Python\SportsNewsletter"
+        subprocess.run(["git", "-C", repo_dir, "add", "index.html"], check=True)
+        subprocess.run(["git", "-C", repo_dir, "commit", "-m", "Daily dashboard update"], check=True)
+        subprocess.run(["git", "-C", repo_dir, "push"], check=True)
+        print("🚀 [GITHUB] Dashboard pushed successfully to GitHub Pages.")
+    except Exception as e:
+        print(f"⚠️ [GITHUB] Could not push to GitHub: {e}")
+
+def send_daily_email(html_content):
+    """Sends the HTML content via email."""
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
     today_str = now_eastern.strftime("%B %d, %Y") 
@@ -1134,4 +1135,17 @@ def send_daily_email():
         print(f"❌ Error: {e}")
 
 if __name__ == '__main__':
-    send_daily_email()
+    # 1. Generate the HTML dashboard once
+    html = build_dynamic_html()
+    
+    # 2. Write the HTML to the local index.html file
+    file_path = r"C:\Users\jblum\Python\SportsNewsletter\index.html"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print("📝 [LOCAL] Successfully updated index.html.")
+    
+    # 3. Automatically push the new file to GitHub
+    push_to_github()
+    
+    # 4. Send the exact same HTML out via email
+    send_daily_email(html)
