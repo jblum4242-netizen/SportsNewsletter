@@ -80,22 +80,7 @@ def fetch_live_odds_clean(sport_key):
         print(f"Odds API Connection Error: {e}")
     return []
 
-def get_direct_article_url(google_url):
-    """Uses the dedicated decoder package to bypass Google's encrypted tokens, with a polite delay."""
-    if not google_url.startswith("https://news.google.com"):
-        return google_url
-        
-    try:
-        time.sleep(0.5)
-        result = gnewsdecoder(google_url)
-        if result.get("status"):
-            return result["decoded_url"]
-        else:
-            print(f"Decoder failed (Rate Limited?): {result.get('message', 'Unknown error')}")
-    except Exception as e:
-        print(f"Decoder error: {e}")
-        
-    return google_url
+
         
 def fetch_team_news(search_query, max_articles=3):
     """Fetches news links using Google News RSS, strictly filtering for recency with a fallback."""
@@ -169,6 +154,53 @@ def fetch_team_news(search_query, max_articles=3):
         return fallback_articles
         
     return articles
+
+import asyncio
+import aiohttp
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+async def get_direct_article_url(session, url):
+    try:
+        async with session.get(url, timeout=10) as response:
+            return str(response.url)
+    except Exception:
+        return url
+
+async def fetch_game_previews(session, away_team, home_team, max_articles=3):
+    encoded_query = urllib.parse.quote(f"{away_team} {home_team} game preview")
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    articles = []
+    clickbait_phrases = ["how to watch", "where to watch", "what channel", "what time is", "tv schedule"]
+    
+    try:
+        async with session.get(url, headers=headers, timeout=10) as res:
+            if res.status == 200:
+                content = await res.read()
+                root = ET.fromstring(content)
+                for item in root.findall('./channel/item'):
+                    title = item.find('title').text
+                    if any(bad in title.lower() for bad in clickbait_phrases):
+                        continue
+                    if " - " in title:
+                        title = " - ".join(title.split(" - ")[:-1])
+                    
+                    raw_link = item.find('link').text
+                    direct_link = await get_direct_article_url(session, raw_link)
+                    articles.append({'title': title, 'link': direct_link})
+                    if len(articles) == max_articles:
+                        break
+    except Exception as e:
+        print(f"Error fetching {away_team}: {e}")
+        
+    # Return a dictionary so we know which game these articles belong to
+    return {"away_team": away_team, "home_team": home_team, "articles": articles}
+
+async def fetch_all_previews(games_list):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_game_previews(session, away, home) for away, home in games_list]
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
 def fetch_covers_consensus(league):
     import re
@@ -339,38 +371,7 @@ def get_live_espn_score(league_name, matchup_str):
     except: pass
     return None, "upcoming"
 
-def fetch_game_previews(away_team, home_team, max_articles=3):
-    encoded_query = urllib.parse.quote(f"{away_team} {home_team} game preview")
-    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    articles = []
-    clickbait_phrases = ["how to watch", "where to watch", "what channel", "what time is", "tv schedule"]
-    
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            root = ET.fromstring(res.content)
-            for item in root.findall('./channel/item'):
-                title = item.find('title').text
-                title_lower = title.lower()
-                
-                if any(bad in title_lower for bad in clickbait_phrases):
-                    continue
-                    
-                if " - " in title:
-                    title = " - ".join(title.split(" - ")[:-1])
-                    
-                raw_link = item.find('link').text
-                direct_link = get_direct_article_url(raw_link)
-                
-                articles.append({'title': title, 'link': direct_link})
-                
-                if len(articles) == max_articles:
-                    break
-    except Exception as e:
-        print(f"Google News Fetch Error: {e}")
-        
-    return articles
+
 
 def fetch_tv_networks(league):
     sport_path = ESPN_SPORT_MAP.get(league.lower())
@@ -809,8 +810,18 @@ def parse_game_metrics(games, covers_data, tv_data, league):
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
     today_date = now_eastern.date()
-    
     future_limit = now_eastern + datetime.timedelta(days=7)
+    
+    # --- NEW: ASYNC BATCH FETCHING ---
+    print(f"🚀 Launching async news fetch for {league}...")
+    games_list = [(g.get("away_team", "Away Team"), g.get("home_team", "Home Team")) for g in games]
+    
+    # Fire all requests at exactly the same time
+    async_results = asyncio.run(fetch_all_previews(games_list))
+    
+    # Create an instant-lookup dictionary with the Away Team as the key
+    news_dictionary = {res['away_team']: res['articles'] for res in async_results if not isinstance(res, Exception) and 'away_team' in res}
+    # ---------------------------------
         
     for game in games:
         home_team = game.get("home_team", "Home Team")
@@ -925,7 +936,7 @@ def parse_game_metrics(games, covers_data, tv_data, league):
                         else:
                             odds_str = f"[{any_book['title']}] {a_disp} | {h_disp}"
 
-        articles = fetch_game_previews(away_team, home_team)
+        articles = news_dictionary.get(away_team, [])
         query_away = away_team.replace(" ", "+")
         query_home = home_team.replace(" ", "+")
         google_search_url = f"https://www.google.com/search?q={query_away}+vs+{query_home}+news&tbm=nws"
