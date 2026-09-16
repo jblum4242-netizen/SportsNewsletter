@@ -377,7 +377,6 @@ def build_fantasy_news_html(news_data, top_additions, fa_news, rank_map, roster_
     html += "</div></div>"
     return html
 
-
 def send_fantasy_email(username):
     """Fetches fantasy alerts, formats them into HTML, and dispatches an email dynamically based on time."""
     # 1. Unpack all 5 variables from fetch_sleeper_alerts
@@ -389,6 +388,7 @@ def send_fantasy_email(username):
         
     # 2. Convert news and additions to HTML
     html_content = build_fantasy_news_html(news_data, top_additions, fa_news, rank_map, roster_by_pos)
+    
     
     # 3. Determine Time & Build Email Wrapper
     eastern_tz = ZoneInfo("America/New_York")

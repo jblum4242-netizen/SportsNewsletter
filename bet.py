@@ -55,6 +55,8 @@ BIG_EAST_HOOPS = [
     "Butler", "UConn", "Connecticut", "Creighton", "DePaul", "Georgetown", "Marquette", "Providence", "St. John's", "Seton Hall", "Villanova", "Xavier"
 ]
 
+SYSTEM_LOGS = []
+
 def fetch_live_odds_clean(sport_key):
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
@@ -120,7 +122,7 @@ def fetch_team_news(search_query, max_articles=3):
                 
                 # --- STEP 2: Title cleaning & filtering ---
                 title_lower = title.lower()
-                generic_phrases = ["official site of the national football league", "nfl.com", "espn", "yahoo sports"]
+                generic_phrases = ["official site of the national football league", "nfl.com", "espn", "yahoo sports","delaware online","delawareonline","the news journal"]
                 if any(bad in title_lower for bad in generic_phrases):
                     continue
                     
@@ -152,11 +154,14 @@ def fetch_team_news(search_query, max_articles=3):
                 if len(articles) == max_articles:
                     break
         else:
-            # --- UPGRADE: Catch non-200 responses so it doesn't fail silently ---
-            print(f"⚠️ HTTP {res.status_code} Error: Google News blocked the request for '{search_query}'.")
+            err_msg = f"Google News blocked '{search_query}' (HTTP {res.status_code})"
+            print(f"⚠️ {err_msg}")
+            SYSTEM_LOGS.append(err_msg)
             
     except Exception as e:
-        print(f"Google Team News Error for {search_query}: {e}")
+        err_msg = f"Google News error for '{search_query}': {e}"
+        print(err_msg)
+        SYSTEM_LOGS.append(err_msg)
         
     # --- STEP 4: Fallback check right before returning ---
     if not articles and fallback_articles:
@@ -165,33 +170,76 @@ def fetch_team_news(search_query, max_articles=3):
         
     return articles
 
-
 def fetch_covers_consensus(league):
+    import re
     consensus_list = []
     league_str = league.lower()
-    url = rf'https://contests.covers.com/consensus/topconsensus/{league_str}/overall'
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    
+    url = f"https://contests.covers.com/consensus/topconsensus/{league_str}/overall"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=12)
         if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(res.text, "html.parser")
+            
             rows = soup.find_all("tr")
             for row in rows:
-                cols = row.find_all("td")
-                if len(cols) >= 3:
-                    matchup_text = cols[0].get_text(separator=" ", strip=True) 
-                    consensus_text = cols[2].get_text(separator=" ", strip=True) 
-                    tokens = matchup_text.split()
-                    percents = consensus_text.replace("%", "").split()
-                    if len(tokens) >= 3 and len(percents) >= 2:
+                text = row.get_text(" ", strip=True)
+                pcts = re.findall(r"(\d+)%", text)
+                
+                if len(pcts) >= 2:
+                    team_names = []
+                    
+                    # 1. Look for the full team name hidden in the logo's title or alt attribute
+                    images = row.find_all("img")
+                    for img in images:
+                        name = img.get("title") or img.get("alt")
+                        if name and "logo" not in name.lower():
+                            team_names.append(name.lower().strip())
+                            
+                    # 2. Fallback: Check the hyperlinks for full name titles
+                    if len(team_names) < 2:
+                        links = row.find_all("a")
+                        for a in links:
+                            title = a.get("title")
+                            if title and "matchup" not in title.lower():
+                                team_names.append(title.lower().strip())
+                                
+                    # 3. Final Fallback: Grab the abbreviations just in case
+                    if len(team_names) < 2:
+                        links = row.find_all("a")
+                        texts = [a.get_text(strip=True).lower() for a in links if a.get_text(strip=True)]
+                        if len(texts) >= 2:
+                            team_names = texts[:2]
+                            
+                    if len(team_names) >= 2:
+                        # Clean off " picks" or " pick" from the team names
+                        clean_away = team_names[0].replace(" picks", "").replace(" pick", "").strip()
+                        clean_home = team_names[1].replace(" picks", "").replace(" pick", "").strip()
+
                         consensus_list.append({
-                            "away_abbr": tokens[1].lower(),
-                            "home_abbr": tokens[2].lower(),
-                            "away_pct": f"{percents[0]}%",
-                            "home_pct": f"{percents[1]}%"
+                            "away_abbr": clean_away,
+                            "home_abbr": clean_home,
+                            "away_pct": f"{pcts[0]}%",
+                            "home_pct": f"{pcts[1]}%"
                         })
+        else:
+            # 🚨 CHECK 1: Covers blocked or returned an error status
+            print(f"🚨 COVERS BLOCKED {league.upper()}: HTTP {res.status_code}")
+            
     except Exception as e:
-        print(f"Covers Scraping Error: {e}")
+        print(f"Covers Consensus Scraping Error for {league}: {e}")
+
+    # 📊 CHECK 2: Print how many matchups were actually collected
+    print(f"📊 [COVERS] {league.upper()}: Parsed {len(consensus_list)} matchup(s)")
+    if consensus_list:
+        # Print a sample entry so you can see exactly what keys/names were grabbed
+        print(f"   Sample: {consensus_list[0]}")
+        
     return consensus_list
 
 def fetch_covers_injuries(team_name, league):
@@ -203,6 +251,10 @@ def fetch_covers_injuries(team_name, league):
         sport, lg = "baseball", "mlb"
     elif "NHL" in league_upper:
         sport, lg = "hockey", "nhl"
+    elif "NFL" in league_upper:
+        sport, lg = "football", "nfl"
+    elif "NCAAF" in league_upper:
+        sport, lg = "football", "ncaaf"
     else:
         return []
 
@@ -410,9 +462,57 @@ def build_pitcher_logs_html(pitcher_id, pitcher_name, opponent_name):
     except Exception as e: print(f"Error fetching logs: {e}")
     return ""
 
+def fetch_phillies_7_day_schedule():
+    """Bypasses the Odds API to pull a full 7-day Phillies schedule directly from MLB."""
+    eastern_tz = ZoneInfo("America/New_York")
+    now_eastern = datetime.datetime.now(eastern_tz)
+    today_str = now_eastern.strftime("%Y-%m-%d")
+    next_week_str = (now_eastern + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+    
+    # 143 is the official MLB team ID for the Philadelphia Phillies
+    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=143&startDate={today_str}&endDate={next_week_str}&hydrate=broadcasts"
+    
+    schedule_list = []
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            dates = res.json().get("dates", [])
+            for d in dates:
+                for game in d.get("games", []):
+                    game_time_raw = game.get("gameDate")
+                    utc_dt = datetime.datetime.fromisoformat(game_time_raw.replace("Z", "+00:00"))
+                    local_dt = utc_dt.astimezone(eastern_tz)
+                    
+                    away = game.get("teams", {}).get("away", {}).get("team", {}).get("name", "Unknown")
+                    home = game.get("teams", {}).get("home", {}).get("team", {}).get("name", "Unknown")
+                    
+                    # Extract TV Network if available
+                    network = ""
+                    broadcasts = game.get("broadcasts", [])
+                    tv_list = [b.get("name") for b in broadcasts if b.get("isNational") or "NBC Sports" in b.get("name", "")]
+                    if tv_list:
+                        network = tv_list[0]
+                    
+                    schedule_list.append({
+                        "league": "MLB",
+                        "matchup": f"{away} vs. {home}",
+                        "time": local_dt.strftime("%I:%M %p ET"),
+                        "network": network,
+                        "game_datetime": local_dt,
+                        "date_header_str": local_dt.strftime("%A, %b %d"),
+                        "real_status": "upcoming",
+                        "live_feed": None
+                    })
+    except Exception as e:
+        print(f"Phillies Schedule Error: {e}")
+        
+    return schedule_list
+
+
 def filter_ncaaf_games(odds_games):
     """Filters NCAAF games to strictly include Top 25 matchups and Delaware."""
-    url = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
+    # UPGRADE 1: Force ESPN to return up to 300 games so Saturday doesn't get cut off by pagination
+    url = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?limit=300"
     
     top_25_teams = set()
     try:
@@ -434,14 +534,26 @@ def filter_ncaaf_games(odds_games):
     except Exception as e:
         print(f"⚠️ Could not fetch Top 25 CFB teams: {e}")
 
+    # UPGRADE 2: Safety Check! If ESPN returns empty (rollover issue), show all games instead of just Delaware.
+    if not top_25_teams:
+        print("⚠️ Top 25 list is empty (ESPN API pagination/rollover issue). Defaulting to returning all games.")
+        return odds_games
+
     filtered_games = []
     
     for game in odds_games:
-        matchup = game.get('matchup', '')
-        if ' vs. ' not in matchup:
-            continue
-            
-        away, home = matchup.split(' vs. ')
+        # Look for raw API keys first
+        away = game.get('away_team', '')
+        home = game.get('home_team', '')
+        
+        if not away or not home:
+            # Fallback if it's already parsed
+            matchup = game.get('matchup', '')
+            if ' vs. ' in matchup:
+                away, home = matchup.split(' vs. ')
+            else:
+                continue
+                
         away_clean = away.lower().strip()
         home_clean = home.lower().strip()
         
@@ -460,7 +572,7 @@ def filter_ncaaf_games(odds_games):
         if is_top_25:
             filtered_games.append(game)
             
-    return filtered_games if filtered_games else odds_games
+    return filtered_games
 
 
 def fetch_last_5_games(team_name, league):
@@ -693,14 +805,32 @@ def parse_game_metrics(games, covers_data, tv_data, league):
             home_pitcher_logs_html = build_pitcher_logs_html(p_data["home_pitcher_id"], p_data["home_pitcher_name"], p_data["away_team_name"])
 
         away_cov, home_cov = "50%", "50%"
+        odds_away = away_team.lower()
+        odds_home = home_team.lower()
+        
+        # Isolate the mascot (last word) to bypass city abbreviations (e.g., "L.A." vs "Los Angeles")
+        away_mascot = odds_away.split()[-1]
+        home_mascot = odds_home.split()[-1]
+
         for game_split in covers_data:
-            if is_subsequence(game_split["away_abbr"], away_team) and is_subsequence(game_split["home_abbr"], home_team):
-                away_cov = game_split["away_pct"]
-                home_cov = game_split["home_pct"]
+            cov_away = game_split.get("away_abbr", "").lower()
+            cov_home = game_split.get("home_abbr", "").lower()
+
+            # Check if the full names match OR if the unique mascots match
+            is_away_match = (cov_away in odds_away or odds_away in cov_away) or (away_mascot in cov_away)
+            is_home_match = (cov_home in odds_home or odds_home in cov_home) or (home_mascot in cov_home)
+            
+            # Check the reverse just in case Covers lists the Home/Away teams backwards
+            is_rev_away_match = (cov_home in odds_away or odds_away in cov_home) or (away_mascot in cov_home)
+            is_rev_home_match = (cov_away in odds_home or odds_home in cov_away) or (home_mascot in cov_away)
+
+            if is_away_match and is_home_match:
+                away_cov = game_split.get("away_pct", "50%")
+                home_cov = game_split.get("home_pct", "50%")
                 break
-            elif is_subsequence(game_split["home_abbr"], away_team) and is_subsequence(game_split["away_abbr"], home_team):
-                away_cov = game_split["home_pct"]
-                home_cov = game_split["away_pct"]
+            elif is_rev_away_match and is_rev_home_match:
+                away_cov = game_split.get("home_pct", "50%")
+                home_cov = game_split.get("away_pct", "50%")
                 break
                 
         away_inj_list = fetch_covers_injuries(away_team, league)
@@ -810,25 +940,57 @@ def format_consensus(consensus_str):
 
 ##Dynamic HTML Block
 
-def build_dynamic_html():
+# ---------------------------------------------------------
+# HELPER: RENDER CALENDAR SECTION
+# ---------------------------------------------------------
+def render_calendar_table(games_list, show_league_badge=True):
+    if not games_list:
+        return "<div style='color: #a0aec0; font-size: 12px; padding: 10px 0;'>No games scheduled.</div>"
+    
+    games_list.sort(key=lambda x: x['game_datetime'])
+    chtml = "<table style='width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 5px;'>"
+    
+    current_date_header = None
+    for g in games_list:
+        if g['date_header_str'] != current_date_header:
+            current_date_header = g['date_header_str']
+            chtml += f'<tr style="background-color: #f1f5f9;"><td colspan="3" style="padding: 6px 10px; font-weight: 700; color: #475569; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; border-radius: 4px;">📅 {current_date_header}</td></tr>'
+
+        # Modern TV Badge
+        tv_station = f" <span style='background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;'>📺 {g['network']}</span>" if g['network'] else ""
+        
+        # Matchup text with live score handling
+        if g['real_status'] in ['completed', 'in_progress'] and g['live_feed']:
+            matchup_display = f"<span style='color: #dc2626; font-weight: bold;'>{g['live_feed']}</span>"
+        else:
+            matchup_display = f"{g['matchup']}{tv_station}"
+            
+        league_badge = f"<td style='padding: 8px 10px; color: #2563eb; font-weight: 700; width: 12%;'>[{g['league']}]</td>" if show_league_badge else ""
+        
+        chtml += f"<tr style='border-bottom: 1px solid #f1f5f9;'><td style='padding: 8px 10px; color: #475569; font-weight: 700; width: 22%;'>{g['time']}</td>{league_badge}<td style='padding: 8px 10px; color: #1e293b;'>{matchup_display}</td></tr>"
+        
+    chtml += "</table>"
+    return chtml
+
+
+# ---------------------------------------------------------
+# MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
+# ---------------------------------------------------------
+def build_sports_briefings():
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
-    
-    # ---------------------------------------------------------
-    # SMART 24-HOUR CACHE & PRE-COMPILING GAME SLATES 
-    # ---------------------------------------------------------
-    # Updated to 7 days to capture full weekends
+    today_date = now_eastern.date()
     future_limit = now_eastern + datetime.timedelta(days=7)
-    league_slates = {} 
     
-    cache_file = "C:\\Users\\jblum\\Python\\SportsNewsletter\\raw_odds_cache.json"
+    league_slates = {} 
+    cache_file = r"C:\Users\jblum\Python\SportsNewsletter\raw_odds_cache.json"
     cached_raw_odds = {}
     cache_is_fresh = False
 
     if os.path.exists(cache_file):
         try:
             file_age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
-            if file_age_hours < 12:
+            if file_age_hours < 15:
                 with open(cache_file, 'r') as f:
                     cached_raw_odds = json.load(f)
                 cache_is_fresh = True
@@ -848,30 +1010,26 @@ def build_dynamic_html():
             raw_odds = fetch_live_odds_clean(api_key)
             cached_raw_odds[league] = raw_odds
         
+        # Pre-filtering raw data
+        if league.upper() == "NCAAF":
+            raw_odds = filter_ncaaf_games(raw_odds)
+        elif league.upper() == "NCAAB":
+            valid_schools = [s.upper() for s in POWER_CONFERENCE_SCHOOLS] + [s.upper() for s in BIG_EAST_HOOPS]
+            raw_odds = [g for g in raw_odds if any(s in g.get('away_team', '').upper() or s in g.get('home_team', '').upper() for s in valid_schools)]
+        elif "MLB" in league.upper():
+            raw_odds = [g for g in raw_odds if "Philli" in g.get('away_team', '') or "Philli" in g.get('home_team', '')]
+
         parsed_games = parse_game_metrics(raw_odds, covers_data, tv_data, league)
             
         final_display_list = []
-        if "MLB" in league.upper():
-            final_display_list = [g for g in parsed_games if "Philli" in g.get('matchup', '')]
-        elif league.upper() == "NCAAF":
-            top_25_and_delaware = filter_ncaaf_games(parsed_games)
-            for g in top_25_and_delaware:
-                game_time = g.get('game_datetime') 
-                if game_time and game_time <= future_limit:
-                    final_display_list.append(g)
-        elif league.upper() in ["NFL", "NCAAB", "EPL"]:
-            for g in parsed_games:
-                game_time = g.get('game_datetime') 
-                if game_time and game_time <= future_limit:
-                    if league.upper() == "NCAAB":
-                        away_team, home_team = g['matchup'].split(' vs. ')
-                        valid_schools = [s.upper() for s in POWER_CONFERENCE_SCHOOLS] + [s.upper() for s in BIG_EAST_HOOPS]
-                        if any(s in away_team.upper() or s in home_team.upper() for s in valid_schools):
-                            final_display_list.append(g)
-                    else:
-                        final_display_list.append(g)
-        else:
-            final_display_list = parsed_games[:5]
+        for g in parsed_games:
+            game_time = g.get('game_datetime') 
+            # Ensure the game is strictly between TODAY and 7 days from now
+            if game_time and today_date <= game_time.date() <= future_limit.date():
+                final_display_list.append(g)
+        
+        if league.upper() not in ["NFL", "NCAAB", "NCAAF", "EPL", "MLB"]:
+            final_display_list = final_display_list[:5]
             
         league_slates[league] = final_display_list
 
@@ -882,37 +1040,35 @@ def build_dynamic_html():
         print(f"Cache Write Error: {e}")
 
     # ---------------------------------------------------------
-    # 1. BUILD FAVORITE TEAMS HTML (Tab: News)
+    # 1. NEWS CONTENT (Used in Web & Email)
     # ---------------------------------------------------------
     FAVORITE_TEAMS = {
         "Philadelphia Eagles": 'Philadelphia Eagles News',
+        "UCLA Bruins Men's Basketball": "UCLA Bruins Men's Basketball News",
+        "Tottenham Hotspur": 'Tottenham Hotspur News',
         "Delaware Blue Hens": 'Delaware Blue Hens Football News',
-        "UCLA Bruins men's basketball": "UCLA Bruins Men's Basketball News",
-        "Tottenham Hotspur": 'Tottenham Hotspur News'
+   "Philadelphia 76ers": 'Philadelphia 76ers News'
     }
     
-    news_html = "<div id='tab-news' class='tab-content'>"
-    news_html += f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
-    
+    news_card_content = ""
     for team_name, search_query in FAVORITE_TEAMS.items():
         articles = fetch_team_news(search_query) 
         encoded_fallback = urllib.parse.quote(search_query)
         google_search_url = f"https://www.google.com/search?q={encoded_fallback}&tbm=nws"
         
-        news_html += f"<h4 style='margin: 10px 0 5px 0; color: #2d3748; font-size: 14px;'>{team_name}</h4>"
+        news_card_content += f"<h4 style='margin: 12px 0 6px 0; color: #1e293b; font-size: 14px;'>{team_name}</h4>"
         if articles:
-            news_html += "<ul style='margin: 0; padding-left: 20px; font-size: 12px;'>"
+            news_card_content += "<ul style='margin: 0; padding-left: 20px; font-size: 12px; color: #334155;'>"
             for art in articles:
                 display_title = art['title'][:80] + '...' if len(art['title']) > 80 else art['title']
-                news_html += f"<li style='margin-bottom: 4px;'><a href='{art['link']}' target='_blank' style='color: #2b6cb0; text-decoration: none;'>{display_title}</a></li>"
-            news_html += "</ul>"
+                news_card_content += f"<li style='margin-bottom: 5px;'><a href='{art['link']}' target='_blank' style='color: #2563eb; text-decoration: none;'>{display_title}</a></li>"
+            news_card_content += "</ul>"
         else:
-            news_html += f"<div style='color: #a0aec0; font-size: 12px; padding-left: 5px; font-style: italic;'>No relevant new articles found from the last 72 hours.</div>"
-        news_html += f"<div style='margin-top: 5px; margin-bottom: 12px; font-size: 11px; padding-left: 5px;'><a href='{google_search_url}' target='_blank' style='color: #4a5568;'>↳ Search all news for this team</a></div>"
-    news_html += "</div></div>"
+            news_card_content += f"<div style='color: #94a3b8; font-size: 12px; padding-left: 5px; font-style: italic;'>No relevant new articles found from the last 72 hours.</div>"
+        news_card_content += f"<div style='margin-top: 4px; margin-bottom: 10px; font-size: 11px; padding-left: 5px;'><a href='{google_search_url}' target='_blank' style='color: #64748b;'>↳ Search all news</a></div>"
 
     # ---------------------------------------------------------
-    # 2. BUILD GAME CALENDARS HTML (Tab: Schedule)
+    # 2. COLLECT SCHEDULE DATA
     # ---------------------------------------------------------
     all_monitored_games = []
     for league, games in league_slates.items():
@@ -925,11 +1081,7 @@ def build_dynamic_html():
                 live_feed = None
                 
             game['real_status'] = real_status 
-            date_str = game.get('date')
-            if not date_str and game.get('game_datetime'):
-                date_str = game['game_datetime'].strftime("%A, %b %d")
-            elif not date_str:
-                date_str = now_eastern.strftime("%A, %b %d")
+            date_str = game.get('game_datetime', now_eastern).strftime("%A, %b %d")
 
             all_monitored_games.append({
                 "league": league,
@@ -942,42 +1094,15 @@ def build_dynamic_html():
                 "live_feed": live_feed
             })
 
-    def render_calendar_section(games_list, section_title, section_icon, section_color):
-        if not games_list: return ""
-        games_list.sort(key=lambda x: x['game_datetime'])
-        chtml = f"<h3 style='border-bottom: 2px solid {section_color}; padding-bottom: 5px; color: #1a365d; margin-top: 20px;'>{section_icon} {section_title}</h3>"
-        chtml += f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
-        chtml += "<table style='width: 100%; font-size: 12px; border-collapse: collapse;'>"
-        
-        current_date_header = None
-        for g in games_list:
-            if g['date_header_str'] != current_date_header:
-                current_date_header = g['date_header_str']
-                chtml += f'<tr style="background-color: #f2f4f7;"><td colspan="3" style="padding: 6px 8px; font-weight: bold; color: #334155; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid #e2e8f0;">📅 {current_date_header}</td></tr>'
-
-            tv_station = f" ({g['network']})" if g['network'] else ""
-            matchup_display = f"<span style='color: #e53e3e; font-weight: bold;'>{g['live_feed']}</span>" if (g['real_status'] in ['completed', 'in_progress'] and g['live_feed']) else f"{g['matchup']}<span style='color: #e53e3e; font-weight: bold;'>{tv_station}</span>"
-            chtml += f"<tr style='border-bottom: 1px solid #edf2f7;'><td style='padding: 6px 8px; color: #4a5568; font-weight: bold; width: 20%;'>{g['time']}</td><td style='padding: 6px 8px; color: #e53e3e; font-weight: bold; width: 15%;'>[{g['league']}]</td><td style='padding: 6px 8px; color: #2d3748;'>{matchup_display}</td></tr>"
-        chtml += "</table></div>"
-        return chtml
-
-    schedule_html = "<div id='tab-schedule' class='tab-content'>"
-    regular_games = [g for g in all_monitored_games if g['league'].upper() != 'EPL']
-    soccer_games = [g for g in all_monitored_games if g['league'].upper() == 'EPL']
-
-    if not regular_games and not soccer_games:
-        schedule_html += f"<div style='background: #fff; padding: 15px; border-radius: 8px;'><span style='color: #a0aec0;'>No monitored sports scheduled for the next 7 days.</span></div>"
-    else:
-        schedule_html += render_calendar_section(regular_games, "Game Calendar", "📅", "#4a5568")
-        schedule_html += render_calendar_section(soccer_games, "Soccer Schedule", "⚽", "#38a169")
-    schedule_html += "</div>"
+    # Filter Today's Games
+    today_games = [g for g in all_monitored_games if g['game_datetime'].date() == today_date]
+    today_table_html = render_calendar_table(today_games, show_league_badge=True)
 
     # ---------------------------------------------------------
-    # 3. BUILD UPCOMING LEAGUE BOARDS (Dynamic Tabs)
+    # 3. BUILD LEAGUE TABS (Schedule + Matchup Cards)
     # ---------------------------------------------------------
     def render_game_block(game, league):
-        # [KEEP YOUR EXACT render_game_block CODE HERE]
-        block_html = f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>"
+        block_html = f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);'>"
         main_title = f"{league}: {game['matchup']}"
         away_team, home_team = game['matchup'].split(' vs. ')
 
@@ -1001,14 +1126,40 @@ def build_dynamic_html():
             away_injuries = ""
             home_injuries = ""
         
-        block_html += f"<div style='display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;'><h4 style='margin: 0; font-size: 16px; color: #2d3748; font-weight: 700; width: 65%;'>{main_title}</h4><div style='text-align: right; min-width: 120px;'><span style='background: #edf2f7; color: #4a5568; font-size: 11px; padding: 4px 8px; border-radius: 4px; font-weight: bold;'>{game['tv_info']}</span>"
-        if game.get('network'): block_html += f"<br><span style='color: #e53e3e; font-size: 11px; font-weight: 900; display: inline-block; margin-top: 6px;'>📺 {game.get('network')}</span>"
-        block_html += f"</div></div><table style='width: 100%; font-size: 13px; border-collapse: collapse;'><tr><td style='padding: 6px 0; color: #718096; width: 28%;'>FanDuel Lines:</td><td style='font-weight: bold; color: #1a202c;'>{game['odds']}</td></tr>"
+        block_html += f"<div style='display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;'><h4 style='margin: 0; font-size: 16px; color: #1e293b; font-weight: 700; width: 65%;'>{main_title}</h4><div style='text-align: right; min-width: 120px;'><span style='background: #f1f5f9; color: #475569; font-size: 11px; padding: 4px 8px; border-radius: 6px; font-weight: 700;'>{game.get('game_date', '')} • {game['tv_info']}</span>"
+        if game.get('network'): block_html += f"<br><span style='color: #dc2626; font-size: 11px; font-weight: 800; display: inline-block; margin-top: 4px;'>📺 {game.get('network')}</span>"
+        # --- CLEAN UP THE ODDS STRING ---
+        display_odds = game['odds']
+        if "[FanDuel]" in display_odds and "|" in display_odds:
+            try:
+                # Remove the [FanDuel] tag
+                display_odds = display_odds.replace("[FanDuel] ", "")
+                away_side, home_side = display_odds.split(" | ")
+                
+                # Chop off the (-114) juice from both sides
+                away_side = away_side.split(" (")[0]
+                home_side = home_side.split(" (")[0]
+                
+                # Add a '+' sign to the spread if it is positive
+                away_team, away_spread = away_side.rsplit(" ", 1)
+                if float(away_spread) > 0 and not away_spread.startswith("+"):
+                    away_spread = f"+{away_spread}"
+                    
+                home_team, home_spread = home_side.rsplit(" ", 1)
+                if float(home_spread) > 0 and not home_spread.startswith("+"):
+                    home_spread = f"+{home_spread}"
+                    
+                display_odds = f"{away_team} {away_spread} | {home_team} {home_spread}"
+            except Exception:
+                pass # If the formatting is unexpected, it will just safely fall back to the original text
+        # --------------------------------
+
+        block_html += f"</div></div><table style='width: 100%; font-size: 13px; border-collapse: collapse;'><tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>FanDuel Lines:</td><td style='font-weight: 700; color: #0f172a;'>{display_odds}</td></tr>"
         
-        if "MLB" in league.upper(): block_html += f"<tr><td style='padding: 6px 0; color: #718096;'>Probable Pitchers:</td><td style='color: #2b6cb0; font-weight: bold;'>⚾ {game.get('pitchers', 'TBD vs TBD')}</td></tr>"
-        if league.upper() != "EPL": block_html += f"<tr><td style='padding: 6px 0; color: #718096;'>Covers Consensus:</td><td>{format_consensus(game['covers'])}</td></tr>"
+        if "MLB" in league.upper(): block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Probable Pitchers:</td><td style='color: #2563eb; font-weight: 700;'>⚾ {game.get('pitchers', 'TBD vs TBD')}</td></tr>"
+        if league.upper() != "EPL": block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Covers Consensus:</td><td>{format_consensus(game['covers'])}</td></tr>"
             
-        block_html += f"<tr><td style='padding: 6px 0; color: #718096; font-weight: bold; vertical-align: top;'>Global News:</td><td>{game.get('news_html', '')}</td></tr></table>"
+        block_html += f"<tr><td style='padding: 6px 0; color: #64748b; font-weight: 700; vertical-align: top;'>Global News:</td><td>{game.get('news_html', '')}</td></tr></table>"
         
         if league.upper() != "EPL": block_html += game.get('injury_html', '')
         if league.upper() == "EPL": block_html += away_injuries + away_last_5_html + home_injuries + home_last_5_html
@@ -1020,49 +1171,125 @@ def build_dynamic_html():
             
         block_html += h2h_html
         fd_url = "https://sportsbook.fanduel.com/soccer/english-premier-league" if league.upper() == "EPL" else f"https://sportsbook.fanduel.com/navigation/{league.lower()}"
-        block_html += f"<a href='{fd_url}' style='display: block; background-color: #00aeef; color: white; text-align: center; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px; margin-top: 15px;'>Open {league} Market on FanDuel App 📲</a></div>"
+        block_html += f"<a href='{fd_url}' target='_blank' style='display: block; background-color: #0284c7; color: white; text-align: center; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 13px; margin-top: 15px;'>Open {league} Market on FanDuel App 📲</a></div>"
         return block_html
 
     boards_html = ""
     dynamic_nav_buttons = ""
     
     for league, games in league_slates.items():
-        upcoming_games = [g for g in games if g.get('real_status', 'upcoming') == 'upcoming']
-        if not upcoming_games:
-            continue 
-            
+        if not games: continue
+        
         l_id = league.lower()
         dynamic_nav_buttons += f"<button class='tab-btn' id='btn-{l_id}' onclick=\"switchTab('{l_id}')\">🏆 {league}</button>"
         boards_html += f"<div id='tab-{l_id}' class='tab-content'>"
+        
+        # 1. League-Specific Upcoming Schedule Table at Top
+        # 1. League-Specific Upcoming Schedule Table at Top
+        if league.upper() == "MLB":
+            league_schedule_games = fetch_phillies_7_day_schedule()
+        else:
+            league_schedule_games = [g for g in all_monitored_games if g['league'].upper() == league.upper()]
+            
+
+        boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule (7 Days)</h3>"
+        boards_html += render_calendar_table(league_schedule_games, show_league_badge=False)
+        boards_html += "</div>"
+        
+        # 2. Detailed Matchup Analysis Blocks
+        upcoming_games = [g for g in games if g.get('real_status', 'upcoming') == 'upcoming']
         for game in upcoming_games:
             boards_html += render_game_block(game, league)
         boards_html += "</div>"
 
     # ---------------------------------------------------------
-    # 4. ASSEMBLE FINAL HTML WITH CSS & JS
+    # 4. FINAL WEB DASHBOARD HTML (With Modern CSS)
     # ---------------------------------------------------------
-    final_html = f"""
+    web_dashboard_html = f"""<!DOCTYPE html>
     <html>
     <head>
+        <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Sports NewsLetter</title>
         <style>
-            body {{ font-family: Arial, sans-serif; background-color: #f7fafc; padding: 10px 20px; color: #1a202c; margin: 0; }}
-            .tab-nav {{ display: flex; gap: 4px; overflow-x: auto; padding-bottom: 0px; border-bottom: 2px solid #cbd5e0; margin-bottom: 20px; white-space: nowrap; }}
-            .tab-btn {{ background-color: #edf2f7; border: 1px solid #cbd5e0; border-bottom: none; padding: 12px 16px; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: bold; color: #4a5568; font-size: 14px; margin-bottom: -2px; transition: 0.2s; }}
-            .tab-btn:hover {{ background-color: #e2e8f0; }}
-            .tab-btn.active {{ background-color: #fff; color: #2b6cb0; border-top: 3px solid #2b6cb0; border-left: 1px solid #cbd5e0; border-right: 1px solid #cbd5e0; border-bottom: 2px solid #fff; padding-top: 10px; z-index: 10; }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                background-color: #f8fafc;
+                color: #0f172a;
+                margin: 0 auto;
+                max-width: 960px;
+                padding: 24px 16px;
+            }}
+            .tab-nav {{
+                display: flex;
+                gap: 8px;
+                overflow-x: auto;
+                padding-bottom: 8px;
+                margin-bottom: 20px;
+                white-space: nowrap;
+            }}
+            .tab-btn {{
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                padding: 10px 18px;
+                border-radius: 9999px;
+                cursor: pointer;
+                font-weight: 600;
+                color: #64748b;
+                font-size: 13px;
+                transition: all 0.2s ease;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            }}
+            .tab-btn:hover {{
+                background-color: #f1f5f9;
+                color: #1e293b;
+            }}
+            .tab-btn.active {{
+                background-color: #2563eb;
+                color: #ffffff;
+                border-color: #2563eb;
+                box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
+            }}
             .tab-content {{ display: none; }}
+            .card-container {{
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 20px;
+                margin-bottom: 20px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            }}
         </style>
     </head>
     <body>
-        <div class="tab-nav">
-            <button class="tab-btn" id="btn-schedule" onclick="switchTab('schedule')">📅 Schedule</button>
-            <button class="tab-btn" id="btn-news" onclick="switchTab('news')">🦅 Squads News</button>
+        <div style="text-align: right; font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 12px; letter-spacing: 0.5px;">
+          Last Updated: {now_eastern.strftime('%B %d, %I:%M %p ET')}
+        </div>
+    
+    <div class="tab-nav">
+        <button class="tab-btn" id="btn-today" onclick="switchTab('today')">⚡ Today's Slate</button>
+            <button class="tab-btn" id="btn-news" onclick="switchTab('news')">🦅 My Team News</button>
             {dynamic_nav_buttons}
+            <a href="fantasy.html" class="tab-btn" style="text-decoration: none; display: inline-block;">🏈 Dynasty Roster</a>
         </div>
         
-        {schedule_html}
-        {news_html}
+        <!-- TAB 1: TODAY'S GAMES ONLY -->
+        <div id="tab-today" class="tab-content">
+            <div class="card-container">
+                <h3 style="margin-top: 0; color: #1e293b; font-size: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;">⚡ Today's Live Schedule</h3>
+                {today_table_html}
+            </div>
+        </div>
+
+        <!-- TAB 2: NEWS -->
+        <div id="tab-news" class="tab-content">
+            <div class="card-container">
+                <h3 style="margin-top: 0; color: #1e293b; font-size: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;">📰 Favorite Teams Headlines</h3>
+                {news_card_content}
+            </div>
+        </div>
+
+        <!-- DYNAMIC LEAGUE TABS -->
         {boards_html}
 
         <script>
@@ -1076,32 +1303,57 @@ def build_dynamic_html():
                 if (target) target.style.display = 'block';
                 if (btn) btn.classList.add('active');
                 
-                // Set URL hash so refreshing stays on the same tab
                 window.location.hash = tabName;
             }}
 
             window.addEventListener('DOMContentLoaded', () => {{
                 let currentHash = window.location.hash.replace('#', '');
-                // Fallback to schedule if hash is empty or invalid
                 if (!currentHash || !document.getElementById('tab-' + currentHash)) {{
-                    currentHash = 'schedule';
+                    currentHash = 'today';
                 }}
                 switchTab(currentHash);
             }});
         </script>
     </body>
-    </html>
-    """
-    return final_html
+    </html>"""
 
-##End of Dynamic HTML Block
+    # ---------------------------------------------------------
+    # 5. LIGHTWEIGHT EMAIL HTML
+    # ---------------------------------------------------------
+    email_html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #0f172a; padding: 10px;">
+        <h2 style="color: #1e293b; margin-bottom: 4px;">🚀 Daily Sports Digest</h2>
+        <div style="font-size: 12px; color: #64748b; margin-bottom: 16px;">{now_eastern.strftime("%A, %B %d, %Y")}</div>
+
+        <!-- TODAY'S SCHEDULE -->
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+            <h3 style="margin-top: 0; font-size: 15px; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;">📅 Today's Games</h3>
+            {today_table_html}
+        </div>
+
+        <!-- SQUAD NEWS -->
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+            <h3 style="margin-top: 0; font-size: 15px; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;">📰 Squads News</h3>
+            {news_card_content}
+        </div>
+
+        <!-- CALL TO ACTION BUTTON -->
+        <a href="https://jblum4242-netizen.github.io/SportsNewsletter/" target="_blank" style="display: block; background: #2563eb; color: #ffffff; text-align: center; padding: 14px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px;">
+            Open Full Interactive Dashboard 📊
+        </a>
+    </div>
+    """
+
+    return web_dashboard_html, email_html
+
 
 def push_to_github():
-    """Pushes the updated index.html to GitHub Pages automatically."""
+    """Pushes the updated index.html and fantasy.html to GitHub Pages automatically."""
     try:
         repo_dir = r"C:\Users\jblum\Python\SportsNewsletter"
-        subprocess.run(["git", "-C", repo_dir, "add", "index.html"], check=True)
-        subprocess.run(["git", "-C", repo_dir, "commit", "-m", "Daily dashboard update"], check=True)
+        # The "." tells Git to add all updated files in the folder (including fantasy.html)
+        subprocess.run(["git", "-C", repo_dir, "add", "."], check=True)
+        subprocess.run(["git", "-C", repo_dir, "commit", "-m", "Daily dashboard & fantasy update"], check=True)
         subprocess.run(["git", "-C", repo_dir, "push"], check=True)
         print("🚀 [GITHUB] Dashboard pushed successfully to GitHub Pages.")
     except Exception as e:
@@ -1135,17 +1387,17 @@ def send_daily_email(html_content):
         print(f"❌ Error: {e}")
 
 if __name__ == '__main__':
-    # 1. Generate the HTML dashboard once
-    html = build_dynamic_html()
+    # 1. Generate both web and email HTML versions
+    web_html, email_html = build_sports_briefings()
     
-    # 2. Write the HTML to the local index.html file
+    # 2. Save the full app to index.html for GitHub Pages
     file_path = r"C:\Users\jblum\Python\SportsNewsletter\index.html"
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(web_html)
     print("📝 [LOCAL] Successfully updated index.html.")
     
-    # 3. Automatically push the new file to GitHub
+    # 3. Automatically push the web app update to GitHub Pages
     push_to_github()
     
-    # 4. Send the exact same HTML out via email
-    send_daily_email(html)
+    # 4. Dispatch the lightweight digest via email
+    send_daily_email(email_html)
