@@ -243,6 +243,10 @@ def fetch_covers_consensus(league):
     return consensus_list
 
 def fetch_covers_injuries(team_name, league):
+    import requests
+    import time
+    from bs4 import BeautifulSoup
+    
     league_upper = league.upper()
     
     if "NBA" in league_upper:
@@ -268,10 +272,23 @@ def fetch_covers_injuries(team_name, league):
         res = requests.get(url, headers=headers, timeout=15)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            table = soup.find('table')
             
-            if table:
-                rows = table.find_all('tr')[1:] 
+            # Find the actual injury table by validating the header columns
+            injury_table = None
+            for table in soup.find_all('table'):
+                headers_text = [th.text.strip().lower() for th in table.find_all('th')]
+                
+                # Disqualify schedule / results tables
+                if any(bad in " ".join(headers_text) for bad in ["opponent", "result", "score"]):
+                    continue
+                    
+                # Ensure it contains columns typical of injury reports
+                if any("player" in h or "injury" in h or "status" in h for h in headers_text):
+                    injury_table = table
+                    break
+            
+            if injury_table:
+                rows = injury_table.find_all('tr')[1:] 
                 for row in rows:
                     cols = row.find_all('td')
                     if len(cols) >= 3:  
@@ -510,76 +527,98 @@ def fetch_phillies_7_day_schedule():
 
 
 def filter_ncaaf_games(odds_games):
-    """Filters NCAAF games to strictly include Top 25 matchups and Delaware."""
-    # UPGRADE 1: Force ESPN to return up to 300 games so Saturday doesn't get cut off by pagination
-    url = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?limit=300"
+    """Filters NCAAF games to Top 25 teams, Power 4 Head-to-Heads, and Delaware."""
+    import requests
     
-    top_25_teams = set()
+    # 1. Fetch the actual AP Top 25 Rankings directly from ESPN
+    rankings_url = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
+    top_25_teams = {}
+    
     try:
-        res = requests.get(url, timeout=10)
+        res = requests.get(rankings_url, timeout=10)
         if res.status_code == 200:
             data = res.json()
-            for event in data.get('events', []):
-                for comp in event.get('competitions', []):
-                    for competitor in comp.get('competitors', []):
-                        # Only add teams that actually have a Top 25 rank in ESPN's data
-                        cur_rank = competitor.get('curatedRank', {}).get('current', 99)
-                        if 1 <= cur_rank <= 25:
-                            team = competitor.get('team', {})
-                            # Store full display name and exact location/nickname
-                            if 'displayName' in team:
-                                top_25_teams.add(team['displayName'].lower())
-                            if 'location' in team and 'nickname' in team:
-                                top_25_teams.add(f"{team['location']} {team['nickname']}".lower())
+            for poll in data.get('rankings', []):
+                for rank_item in poll.get('ranks', []):
+                    current_rank = rank_item.get('current')
+                    team = rank_item.get('team', {})
+                    if 'location' in team:
+                        top_25_teams[team['location'].lower()] = current_rank
+                    if 'nickname' in team:
+                        top_25_teams[team['nickname'].lower()] = current_rank
+                break 
     except Exception as e:
-        print(f"⚠️ Could not fetch Top 25 CFB teams: {e}")
+        print(f"⚠️ Could not fetch Top 25 CFB rankings: {e}")
 
-    # UPGRADE 2: Safety Check! If ESPN returns empty (rollover issue), show all games instead of just Delaware.
-    if not top_25_teams:
-        print("⚠️ Top 25 list is empty (ESPN API pagination/rollover issue). Defaulting to returning all games.")
-        return odds_games
+    # 2. Hardcode the Power 4 + Notre Dame to catch all major intra-conference clashes
+    power_4 = {
+        "alabama", "arkansas", "auburn", "florida", "georgia", "kentucky", "lsu", "mississippi state", 
+        "missouri", "oklahoma", "ole miss", "south carolina", "tennessee", "texas", "texas a&m", "vanderbilt",
+        "illinois", "indiana", "iowa", "maryland", "michigan", "michigan state", "minnesota", "nebraska", 
+        "northwestern", "ohio state", "oregon", "penn state", "purdue", "rutgers", "ucla", "usc", "washington", "wisconsin",
+        "arizona", "arizona state", "baylor", "byu", "cincinnati", "colorado", "houston", "iowa state", "kansas", 
+        "kansas state", "oklahoma state", "tcu", "texas tech", "ucf", "utah", "west virginia",
+        "boston college", "california", "clemson", "duke", "florida state", "georgia tech", "louisville", "miami", 
+        "nc state", "north carolina", "pittsburgh", "smu", "stanford", "syracuse", "virginia", "virginia tech", "wake forest",
+        "notre dame"
+    }
 
     filtered_games = []
     
     for game in odds_games:
-        # Look for raw API keys first
-        away = game.get('away_team', '')
-        home = game.get('home_team', '')
+        away = game.get('away_team', '').lower().strip()
+        home = game.get('home_team', '').lower().strip()
         
         if not away or not home:
-            # Fallback if it's already parsed
-            matchup = game.get('matchup', '')
-            if ' vs. ' in matchup:
-                away, home = matchup.split(' vs. ')
-            else:
-                continue
-                
-        away_clean = away.lower().strip()
-        home_clean = home.lower().strip()
-        
-        # 1. ALWAYS include University of Delaware
-        if "delaware" in away_clean or "delaware" in home_clean:
+            continue
+
+        away_rank_str = ""
+        home_rank_str = ""
+        for t_name, t_rank in top_25_teams.items():
+            if t_name in away and not away_rank_str:
+                away_rank_str = f"({t_rank}) "
+            if t_name in home and not home_rank_str:
+                home_rank_str = f"({t_rank}) "
+
+        game['away_rank'] = away_rank_str
+        game['home_rank'] = home_rank_str
+        # -------------------------------------------------------------
+            
+        # Rule 1: Always include Delaware
+        if "delaware" in away or "delaware" in home:
             filtered_games.append(game)
             continue
             
-        # 2. Match against full team names rather than broad partial words
-        is_top_25 = False
-        for top_team in top_25_teams:
-            if top_team in away_clean or top_team in home_clean or away_clean in top_team or home_clean in top_team:
-                is_top_25 = True
-                break
-                
+        # Rule 2: Does the game involve a Top 25 team?
+        is_top_25 = bool(away_rank_str or home_rank_str)
         if is_top_25:
+            filtered_games.append(game)
+            continue
+            
+        # Rule 3: Are BOTH teams in the Power 4? (Head-to-Head requirement)
+        away_is_p4 = any(p4 in away for p4 in power_4)
+        home_is_p4 = any(p4 in home for p4 in power_4)
+        
+        if away_is_p4 and home_is_p4:
             filtered_games.append(game)
             
     return filtered_games
 
-
 def fetch_last_5_games(team_name, league):
+    import unicodedata
+    import time
+    import requests
+    from bs4 import BeautifulSoup
+
     league_str = league.lower()
-    if league_str == "nba": sport = "basketball"
-    elif league_str == "nhl": sport = "hockey"
-    else: sport = "baseball"
+    if league_str in ["nba", "ncaab"]:
+        sport = "basketball"
+    elif league_str == "nhl":
+        sport = "hockey"
+    elif league_str in ["nfl", "ncaaf"]:
+        sport = "football"
+    else:
+        sport = "baseball"
         
     normalized_name = unicodedata.normalize('NFKD', team_name).encode('ASCII', 'ignore').decode('utf-8')
     team_slug = normalized_name.lower().replace(" ", "-").replace(".", "")
@@ -598,7 +637,12 @@ def fetch_last_5_games(team_name, league):
             
             for tbl in tables:
                 headers_text = [th.text.strip().upper() for th in tbl.find_all('th') if th.text]
-                if 'SCORE' in headers_text and ('ATS' in headers_text or 'ML' in headers_text) and 'O/U' in headers_text:
+                # Match tables containing game score results and betting lines
+                has_score = any(h in headers_text for h in ['SCORE', 'RESULT'])
+                has_line = any(h in headers_text for h in ['ATS', 'ML', 'SPREAD', 'LINE'])
+                has_total = any(h in headers_text for h in ['O/U', 'TOTAL', 'OU'])
+                
+                if (has_score and (has_line or has_total)) or ('OPPONENT' in headers_text and has_score):
                     past_results_table = tbl
                     break
                     
@@ -607,16 +651,19 @@ def fetch_last_5_games(team_name, league):
                 for row in rows:
                     cols = row.find_all('td')
                     
-                    if len(cols) >= 5:
+                    if len(cols) >= 3:
                         raw_date = cols[0].text.strip()
-                        if " @ " in raw_date: date_str = raw_date.split(" @ ")[0].strip()
-                        elif " vs " in raw_date: date_str = raw_date.split(" vs ")[0].strip()
-                        else: date_str = " ".join(raw_date.split()[:2])
+                        if " @ " in raw_date:
+                            date_str = raw_date.split(" @ ")[0].strip()
+                        elif " vs " in raw_date:
+                            date_str = raw_date.split(" vs ")[0].strip()
+                        else:
+                            date_str = " ".join(raw_date.split()[:2])
                         
                         opponent = cols[1].text.strip()
                         result = cols[2].text.strip()
-                        ats = cols[3].text.strip()
-                        ou = cols[4].text.strip()
+                        ats = cols[3].text.strip() if len(cols) > 3 else "-"
+                        ou = cols[4].text.strip() if len(cols) > 4 else "-"
                         
                         last_5.append({"date": date_str, "opp": opponent, "result": result, "ats": ats, "ou": ou})
                         
@@ -903,7 +950,7 @@ def parse_game_metrics(games, covers_data, tv_data, league):
             news_html = f"<span style='color: #a0aec0; font-size: 12px;'>No previews available. <a href='{google_search_url}' target='_blank' style='color: #2b6cb0;'>Search Google</a></span>"
 
         parsed_games.append({
-            "matchup": f"{away_team} vs. {home_team}",
+            "matchup": f"{game.get('away_rank', '')}{away_team} vs. {game.get('home_rank', '')}{home_team}",
             "commence_time": commence_time_raw,
             "game_datetime": local_dt_safe,
             "league": league, 
