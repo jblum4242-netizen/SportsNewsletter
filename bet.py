@@ -546,9 +546,15 @@ def filter_ncaaf_games(odds_games):
                     current_rank = rank_item.get('current')
                     team = rank_item.get('team', {})
                     
-                    # STRICTLY use the full display name (e.g., "georgia bulldogs"). No fallbacks!
-                    if 'displayName' in team:
-                        top_25_teams[team['displayName'].lower()] = current_rank
+                    loc = team.get('location', '')
+                    mascot = team.get('name', '')
+                    
+                    # Manually construct the full name (e.g., "georgia bulldogs") 
+                    # since displayName is not provided in the rankings JSON
+                    if loc and mascot:
+                        full_name = f"{loc} {mascot}".strip().lower()
+                        top_25_teams[full_name] = current_rank
+                        
                 break 
     except Exception as e:
         print(f"⚠️ Could not fetch Top 25 CFB rankings: {e}")
