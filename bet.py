@@ -529,7 +529,6 @@ def fetch_phillies_7_day_schedule():
         
     return schedule_list
 
-
 def filter_ncaaf_games(odds_games):
     """Filters NCAAF games to Top 25 teams, Power 4 Head-to-Heads, and Delaware."""
     import requests
@@ -546,8 +545,12 @@ def filter_ncaaf_games(odds_games):
                 for rank_item in poll.get('ranks', []):
                     current_rank = rank_item.get('current')
                     team = rank_item.get('team', {})
-                    if 'location' in team:
-                        top_25_teams[team['location'].lower()] = current_rank
+                    
+                    # Use the full display name (e.g., "Texas Longhorns")
+                    if 'displayName' in team:
+                        top_25_teams[team['displayName'].lower()] = current_rank
+                    
+                    # Use the mascot as a safe fallback (e.g., "Longhorns")
                     if 'nickname' in team:
                         top_25_teams[team['nickname'].lower()] = current_rank
                 break 
@@ -641,7 +644,6 @@ def fetch_last_5_games(team_name, league):
             
             for tbl in tables:
                 headers_text = [th.text.strip().upper() for th in tbl.find_all('th') if th.text]
-                # Match tables containing game score results and betting lines
                 has_score = any(h in headers_text for h in ['SCORE', 'RESULT'])
                 has_line = any(h in headers_text for h in ['ATS', 'ML', 'SPREAD', 'LINE'])
                 has_total = any(h in headers_text for h in ['O/U', 'TOTAL', 'OU'])
@@ -656,7 +658,9 @@ def fetch_last_5_games(team_name, league):
                     cols = row.find_all('td')
                     
                     if len(cols) >= 3:
-                        raw_date = cols[0].text.strip()
+                        # Extract text with spaces to separate hidden spans, then chop off anything from "Week" onward
+                        raw_date = cols[0].get_text(" ", strip=True).split("Week")[0].strip()
+                        
                         if " @ " in raw_date:
                             date_str = raw_date.split(" @ ")[0].strip()
                         elif " vs " in raw_date:
@@ -1020,7 +1024,26 @@ def render_calendar_table(games_list, show_league_badge=True):
     chtml += "</table>"
     return chtml
 
+def check_and_clear_scheduled_cache(cache_file="raw_odds_cache.json"):
+    """Deletes raw odds cache if running during scheduled morning/evening update windows."""
+    now = datetime.datetime.now(ZoneInfo("America/New_York"))
+    current_time = (now.hour, now.minute)
+    
+    # Target windows: ~7:00 AM (06:55 - 07:05) and ~5:52 PM (17:48 - 17:55)
+    in_morning_window = (6, 55) <= current_time <= (7, 5)
+    in_evening_window = (17, 48) <= current_time <= (17, 55)
+    
+    if (in_morning_window or in_evening_window) and os.path.exists(cache_file):
+        try:
+            os.remove(cache_file)
+            print("🧹 [CACHE] Scheduled run window detected: Cleared raw_odds_cache.json")
+        except Exception as e:
+            print(f"⚠️ Could not remove cache file: {e}")
 
+
+# ---------------------------------------------------------
+# MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
+# ---------------------------------------------------------
 # ---------------------------------------------------------
 # MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
 # ---------------------------------------------------------
@@ -1035,6 +1058,10 @@ def build_sports_briefings():
     cached_raw_odds = {}
     cache_is_fresh = False
 
+    # 1. Check if we are in a scheduled update window and wipe the cache if so
+    check_and_clear_scheduled_cache(cache_file)
+
+    # 2. Proceed with normal file checking (will be False if wiped above)
     if os.path.exists(cache_file):
         try:
             file_age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
