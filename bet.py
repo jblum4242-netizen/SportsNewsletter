@@ -1282,6 +1282,9 @@ def build_sports_briefings():
     # ---------------------------------------------------------
     # 4. FINAL WEB DASHBOARD HTML (With Modern CSS)
     # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # 4. FINAL WEB DASHBOARD HTML (With Modern CSS)
+    # ---------------------------------------------------------
     web_dashboard_html = f"""<!DOCTYPE html>
     <html>
     <head>
@@ -1343,11 +1346,11 @@ def build_sports_briefings():
           Last Updated: {now_eastern.strftime('%B %d, %I:%M %p ET')}
         </div>
     
-    <div class="tab-nav">
-        <button class="tab-btn" id="btn-today" onclick="switchTab('today')">⚡ Today's Slate</button>
+        <div class="tab-nav">
+            <button class="tab-btn" id="btn-today" onclick="switchTab('today')">⚡ Today's Slate</button>
             <button class="tab-btn" id="btn-news" onclick="switchTab('news')">🦅 My Team News</button>
             {dynamic_nav_buttons}
-            <a href="fantasy.html" class="tab-btn" style="text-decoration: none; display: inline-block;">🏈 Dynasty Roster</a>
+            <button class="tab-btn" id="btn-dynasty" onclick="switchTab('dynasty')" style="display: none;">🏈 Dynasty Roster</button>
         </div>
         
         <!-- TAB 1: TODAY'S GAMES ONLY -->
@@ -1366,10 +1369,24 @@ def build_sports_briefings():
             </div>
         </div>
 
+        <!-- TAB 3: DYNASTY ROSTER (IFRAME) -->
+        <div id="tab-dynasty" class="tab-content">
+            <div class="card-container" style="padding: 0; overflow: hidden;">
+                <iframe src="fantasy.html" style="width: 100%; height: 850px; border: none;"></iframe>
+            </div>
+        </div>
+
         <!-- DYNAMIC LEAGUE TABS -->
         {boards_html}
 
         <script>
+            // Boss Mode Check
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('boss') === '1') {{
+                const bossBtn = document.getElementById('btn-dynasty');
+                if (bossBtn) bossBtn.style.display = 'inline-block';
+            }}
+
             function switchTab(tabName) {{
                 document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
                 document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -1392,7 +1409,7 @@ def build_sports_briefings():
             }});
         </script>
     </body>
-    </html>"""
+    </html>"""   
 
     # ---------------------------------------------------------
     # 5. LIGHTWEIGHT EMAIL HTML
@@ -1473,8 +1490,15 @@ if __name__ == '__main__':
         f.write(web_html)
     print("📝 [LOCAL] Successfully updated index.html.")
     
-    # 3. Automatically push the web app update to GitHub Pages
+    # 3. Generate the Dynasty Roster (fantasy.html)
+    print("🏈 [LOCAL] Generating Dynasty Roster...")
+    try:
+        subprocess.run(["python", r"C:\Users\jblum\Python\SportsNewsletter\fantasy_news.py"], check=True)
+    except Exception as e:
+        print(f"⚠️ Could not generate fantasy.html: {e}")
+    
+    # 4. Automatically push the web app update to GitHub Pages (will now include fantasy.html)
     push_to_github()
     
-    # 4. Dispatch the lightweight digest via email
+    # 5. Dispatch the lightweight digest via email
     send_daily_email(email_html)
