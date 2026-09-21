@@ -420,23 +420,17 @@ def send_fantasy_email(username):
     
     msg.attach(MIMEText(full_email_html, "html"))
     
-    # 4. Send email via SMTP
-    if not SENDER_PASSWORD:
-        print("❌ Error: GMAIL_APP_PASSWORD environment variable is not set.")
-        return
-
+    # 4. Save HTML to disk for the dashboard
+    file_path = r"C:\Users\jblum\Python\SportsNewsletter\fantasy.html"
     try:
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        
-        # Pass the list of recipients directly to the sendmail function
-        server.sendmail(SENDER_EMAIL, active_recipients, msg.as_string())
-        
-        print(f"📧 [SUCCESS] Dynasty news report dispatched to: {', '.join(active_recipients)}")
-        server.quit()
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(full_email_html)
+        print("📝 [LOCAL] Successfully saved fantasy.html for the dashboard.")
     except Exception as e:
-        print(f"❌ Email Error: {e}")
+        print(f"⚠️ Error saving fantasy.html: {e}")
+
+    print("ℹ️ Dynasty email dispatch disabled.")
+    return
 
 
 # --- TEST BLOCK ---

@@ -1183,6 +1183,11 @@ def build_sports_briefings():
         main_title = f"{league}: {game['matchup']}"
         away_team, home_team = game['matchup'].split(' vs. ')
 
+        if away_team.startswith('(') and ') ' in away_team:
+            away_team = away_team.split(') ', 1)[1]
+        if home_team.startswith('(') and ') ' in home_team:
+            home_team = home_team.split(') ', 1)[1]  
+
         if league.upper() == "EPL":
             away_last_5_data = fetch_epl_xg_form(away_team)
             home_last_5_data = fetch_epl_xg_form(home_team)
