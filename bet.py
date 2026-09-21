@@ -617,7 +617,11 @@ def fetch_last_5_games(team_name, league):
     import unicodedata
     import time
     import requests
+    import re
     from bs4 import BeautifulSoup
+
+    # Strip leading spaces and chop off any ranking prefix like "(5) "
+    clean_team_name = re.sub(r'^\(\d+\)\s*', '', team_name.strip())
 
     league_str = league.lower()
     if league_str in ["nba", "ncaab"]:
@@ -629,7 +633,7 @@ def fetch_last_5_games(team_name, league):
     else:
         sport = "baseball"
         
-    normalized_name = unicodedata.normalize('NFKD', team_name).encode('ASCII', 'ignore').decode('utf-8')
+    normalized_name = unicodedata.normalize('NFKD', clean_team_name).encode('ASCII', 'ignore').decode('utf-8')
     team_slug = normalized_name.lower().replace(" ", "-").replace(".", "")
     
     url = f"https://www.covers.com/sport/{sport}/{league_str}/teams/main/{team_slug}"
@@ -1182,11 +1186,6 @@ def build_sports_briefings():
         block_html = f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);'>"
         main_title = f"{league}: {game['matchup']}"
         away_team, home_team = game['matchup'].split(' vs. ')
-
-        if away_team.startswith('(') and ') ' in away_team:
-            away_team = away_team.split(') ', 1)[1]
-        if home_team.startswith('(') and ') ' in home_team:
-            home_team = home_team.split(') ', 1)[1]  
 
         if league.upper() == "EPL":
             away_last_5_data = fetch_epl_xg_form(away_team)
