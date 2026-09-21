@@ -221,8 +221,16 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
     def get_rank_color(rank_str):
         if not str(rank_str).isdigit(): return "#718096"
         rank = int(rank_str)
-        if rank <= 12: return "#2e7d32" 
-        if rank >= 25: return "#c62828" 
+        
+        if league.upper() == "NFL":
+            # 32 teams: Top 12 green, Bottom 8 red
+            if rank <= 12: return "#2e7d32" 
+            if rank >= 25: return "#c62828" 
+        else:
+            # 138 FBS teams: Top 30 green, Bottom 39 red
+            if rank <= 30: return "#2e7d32"
+            if rank >= 100: return "#c62828"
+            
         return "#4a5568"
 
     rows = []
