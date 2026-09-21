@@ -17,6 +17,8 @@ import subprocess
 
 from epl_analytics import fetch_epl_xg_form, fetch_epl_head_to_head, fetch_epl_injuries, fetch_epl_team_metrics
 
+import football_analytics as football_news
+
 # --- PERSONAL DATA CREDENTIALS ---
 SENDER_EMAIL = "jblum4242@gmail.com"
 SENDER_PASSWORD = "lzygskznkqcejpva"
@@ -1046,14 +1048,15 @@ def check_and_clear_scheduled_cache(cache_file="raw_odds_cache.json"):
         except Exception as e:
             print(f"⚠️ Could not remove cache file: {e}")
 
-
-# ---------------------------------------------------------
-# MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
-# ---------------------------------------------------------
 # ---------------------------------------------------------
 # MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
 # ---------------------------------------------------------
 def build_sports_briefings():
+    print("🏈 Fetching NFL & NCAAF advanced metrics...")
+    football_stats = {
+        "NFL": football_news.fetch_all_league_stats("NFL"),
+        "NCAAF": football_news.fetch_all_league_stats("NCAAF")
+    }
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
     today_date = now_eastern.date()
@@ -1179,14 +1182,22 @@ def build_sports_briefings():
     today_games = [g for g in all_monitored_games if g['game_datetime'].date() == today_date]
     today_table_html = render_calendar_table(today_games, show_league_badge=True)
 
-    # ---------------------------------------------------------
+# ---------------------------------------------------------
     # 3. BUILD LEAGUE TABS (Schedule + Matchup Cards)
     # ---------------------------------------------------------
     def render_game_block(game, league):
-        block_html = f"<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);'>"
+        block_html = (
+            "<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; "
+            "padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);'>"
+        )
         main_title = f"{league}: {game['matchup']}"
         away_team, home_team = game['matchup'].split(' vs. ')
 
+        # Clean AP poll ranking prefixes like "(1) " so scrapers match cleanly
+        clean_away = away_team.split(') ', 1)[1] if (away_team.startswith('(') and ') ' in away_team) else away_team
+        clean_home = home_team.split(') ', 1)[1] if (home_team.startswith('(') and ') ' in home_team) else home_team
+
+        # --- DATA FETCHING (LEAGUE-SPECIFIC) ---
         if league.upper() == "EPL":
             away_last_5_data = fetch_epl_xg_form(away_team)
             home_last_5_data = fetch_epl_xg_form(home_team)
@@ -1206,53 +1217,95 @@ def build_sports_briefings():
             h2h_html = ""
             away_injuries = ""
             home_injuries = ""
-        
-        block_html += f"<div style='display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;'><h4 style='margin: 0; font-size: 16px; color: #1e293b; font-weight: 700; width: 65%;'>{main_title}</h4><div style='text-align: right; min-width: 120px;'><span style='background: #f1f5f9; color: #475569; font-size: 11px; padding: 4px 8px; border-radius: 6px; font-weight: 700;'>{game.get('game_date', '')} • {game['tv_info']}</span>"
-        if game.get('network'): block_html += f"<br><span style='color: #dc2626; font-size: 11px; font-weight: 800; display: inline-block; margin-top: 4px;'>📺 {game.get('network')}</span>"
+
+        # --- ADVANCED FOOTBALL STATS (NFL & NCAAF) ---
+        matchup_stats_html = ""
+        if league.upper() in ["NFL", "NCAAF"]:
+            global_data = football_stats.get(league.upper(), {})
+            matchup_stats_html = football_news.build_matchup_stats_html(clean_away, clean_home, league, global_data)
+
+        # --- CARD HEADER (TITLE + BROADCAST INFO) ---
+        block_html += (
+            f"<div style='display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;'>"
+            f"<h4 style='margin: 0; font-size: 16px; color: #1e293b; font-weight: 700; width: 65%;'>{main_title}</h4>"
+            f"<div style='text-align: right; min-width: 120px;'>"
+            f"<span style='background: #f1f5f9; color: #475569; font-size: 11px; padding: 4px 8px; border-radius: 6px; font-weight: 700;'>"
+            f"{game.get('game_date', '')} • {game['tv_info']}</span>"
+        )
+        if game.get('network'):
+            block_html += f"<br><span style='color: #dc2626; font-size: 11px; font-weight: 800; display: inline-block; margin-top: 4px;'>📺 {game.get('network')}</span>"
+        block_html += "</div></div>"
+
         # --- CLEAN UP THE ODDS STRING ---
         display_odds = game['odds']
         if "[FanDuel]" in display_odds and "|" in display_odds:
             try:
-                # Remove the [FanDuel] tag
-                display_odds = display_odds.replace("[FanDuel] ", "")
-                away_side, home_side = display_odds.split(" | ")
+                raw_odds = display_odds.replace("[FanDuel] ", "")
+                away_side, home_side = raw_odds.split(" | ")
                 
-                # Chop off the (-114) juice from both sides
+                # Strip vig/juice (e.g., -114)
                 away_side = away_side.split(" (")[0]
                 home_side = home_side.split(" (")[0]
                 
-                # Add a '+' sign to the spread if it is positive
-                away_team, away_spread = away_side.rsplit(" ", 1)
+                # Format positive spreads with '+'
+                away_odds_name, away_spread = away_side.rsplit(" ", 1)
                 if float(away_spread) > 0 and not away_spread.startswith("+"):
                     away_spread = f"+{away_spread}"
                     
-                home_team, home_spread = home_side.rsplit(" ", 1)
+                home_odds_name, home_spread = home_side.rsplit(" ", 1)
                 if float(home_spread) > 0 and not home_spread.startswith("+"):
                     home_spread = f"+{home_spread}"
                     
-                display_odds = f"{away_team} {away_spread} | {home_team} {home_spread}"
+                display_odds = f"{away_odds_name} {away_spread} | {home_odds_name} {home_spread}"
             except Exception:
-                pass # If the formatting is unexpected, it will just safely fall back to the original text
-        # --------------------------------
+                pass  # Fall back to original odds text if parsing encounters unusual formatting
 
-        block_html += f"</div></div><table style='width: 100%; font-size: 13px; border-collapse: collapse;'><tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>FanDuel Lines:</td><td style='font-weight: 700; color: #0f172a;'>{display_odds}</td></tr>"
+        # --- ODDS & CONSENSUS TABLE ---
+        block_html += (
+            f"<table style='width: 100%; font-size: 13px; border-collapse: collapse;'>"
+            f"<tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>FanDuel Lines:</td>"
+            f"<td style='font-weight: 700; color: #0f172a;'>{display_odds}</td></tr>"
+        )
         
-        if "MLB" in league.upper(): block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Probable Pitchers:</td><td style='color: #2563eb; font-weight: 700;'>⚾ {game.get('pitchers', 'TBD vs TBD')}</td></tr>"
-        if league.upper() != "EPL": block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Covers Consensus:</td><td>{format_consensus(game['covers'])}</td></tr>"
+        if "MLB" in league.upper():
+            block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Probable Pitchers:</td><td style='color: #2563eb; font-weight: 700;'>⚾ {game.get('pitchers', 'TBD vs TBD')}</td></tr>"
+        if league.upper() != "EPL":
+            block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Covers Consensus:</td><td>{format_consensus(game['covers'])}</td></tr>"
             
         block_html += f"<tr><td style='padding: 6px 0; color: #64748b; font-weight: 700; vertical-align: top;'>Global News:</td><td>{game.get('news_html', '')}</td></tr></table>"
-        
-        if league.upper() != "EPL": block_html += game.get('injury_html', '')
-        if league.upper() == "EPL": block_html += away_injuries + away_last_5_html + home_injuries + home_last_5_html
+
+        # --- INJURIES & ADVANCED STATS BLOCK ---
+        if league.upper() != "EPL":
+            block_html += game.get('injury_html', '')
+
+        # Side-by-side EPA / PPG / YPG table (NFL & NCAAF)
+        block_html += matchup_stats_html
+
+        # --- FORM / LAST 5 GAMES LOGS ---
+        if league.upper() == "EPL":
+            block_html += away_injuries + away_last_5_html + home_injuries + home_last_5_html
         else:
             block_html += away_last_5_html
-            if "MLB" in league.upper() and game.get('away_pitcher_logs'): block_html += game['away_pitcher_logs']
+            if "MLB" in league.upper() and game.get('away_pitcher_logs'):
+                block_html += game['away_pitcher_logs']
             block_html += home_last_5_html
-            if "MLB" in league.upper() and game.get('home_pitcher_logs'): block_html += game['home_pitcher_logs']
+            if "MLB" in league.upper() and game.get('home_pitcher_logs'):
+                block_html += game['home_pitcher_logs']
             
         block_html += h2h_html
-        fd_url = "https://sportsbook.fanduel.com/soccer/english-premier-league" if league.upper() == "EPL" else f"https://sportsbook.fanduel.com/navigation/{league.lower()}"
-        block_html += f"<a href='{fd_url}' target='_blank' style='display: block; background-color: #0284c7; color: white; text-align: center; padding: 10px; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 13px; margin-top: 15px;'>Open {league} Market on FanDuel App 📲</a></div>"
+
+        # --- FANDUEL DIRECT ACTION BUTTON ---
+        fd_url = (
+            "https://sportsbook.fanduel.com/soccer/english-premier-league"
+            if league.upper() == "EPL"
+            else f"https://sportsbook.fanduel.com/navigation/{league.lower()}"
+        )
+        block_html += (
+            f"<a href='{fd_url}' target='_blank' style='display: block; background-color: #0284c7; "
+            f"color: white; text-align: center; padding: 10px; text-decoration: none; border-radius: 8px; "
+            f"font-weight: 700; font-size: 13px; margin-top: 15px;'>Open {league} Market on FanDuel App 📲</a>"
+            f"</div>"
+        )
         return block_html
 
     boards_html = ""
@@ -1283,10 +1336,8 @@ def build_sports_briefings():
             boards_html += render_game_block(game, league)
         boards_html += "</div>"
 
-    # ---------------------------------------------------------
-    # 4. FINAL WEB DASHBOARD HTML (With Modern CSS)
-    # ---------------------------------------------------------
-    # ---------------------------------------------------------
+
+ # ---------------------------------------------------------
     # 4. FINAL WEB DASHBOARD HTML (With Modern CSS)
     # ---------------------------------------------------------
     web_dashboard_html = f"""<!DOCTYPE html>

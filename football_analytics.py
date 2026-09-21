@@ -35,7 +35,7 @@ def fetch_nfl_epa():
         import nflreadpy as nfl
         import pandas as pd
     except ImportError:
-        print("⚠️ nflreadpy not installed. Run 'pip install nflreadpy pandas'.")
+        print("⚠️ nflreadpy not installed. Run 'pip install nflreadpy pandas pyarrow'.")
         return {}
         
     print("📊 Downloading raw NFL play-by-play data via nflreadpy...")
@@ -53,7 +53,8 @@ def fetch_nfl_epa():
     }
     
     try:
-        pbp = nfl.load_pbp([current_year])
+        pbp = nfl.load_pbp([current_year]).to_pandas()
+        
         pbp = pbp.dropna(subset=['epa'])
         pbp = pbp[pbp['play_type'].isin(['pass', 'run'])]
         
@@ -107,28 +108,29 @@ def fetch_cfb_epa():
     current_year = datetime.datetime.now().year
     
     try:
-        # Load the data as a pandas dataframe for compatibility with our ranking logic
         pbp = sdv.cfb.load_cfb_pbp(seasons=[current_year], return_as_pandas=True)
         
-        # Ensure we only use plays with valid EPA and standard play types
-        pbp = pbp.dropna(subset=['EPA'])
-        pbp = pbp[pbp['play_type'].isin(['Pass Reception', 'Pass Incompletion', 'Rush', 'Passing Touchdown', 'Rushing Touchdown', 'Sack'])]
+        epa_col = 'EPA' if 'EPA' in pbp.columns else 'epa'
+        pos_team_col = 'pos_team' if 'pos_team' in pbp.columns else 'posteam'
+        def_team_col = 'def_pos_team' if 'def_pos_team' in pbp.columns else 'defteam'
         
-        # Tag play types for passing and rushing
-        pbp['is_pass'] = pbp['play_type'].str.contains('Pass|Sack', case=False)
-        pbp['is_rush'] = pbp['play_type'].str.contains('Rush', case=False)
+        play_type_col = 'play_type' if 'play_type' in pbp.columns else 'type_text'
+        if play_type_col not in pbp.columns:
+            play_type_col = [c for c in pbp.columns if 'type' in c.lower()][0]
+
+        pbp = pbp.dropna(subset=[epa_col, play_type_col])
+        pbp['is_pass'] = pbp[play_type_col].astype(str).str.contains('Pass|Sack', case=False, na=False)
+        pbp['is_rush'] = pbp[play_type_col].astype(str).str.contains('Rush', case=False, na=False)
+        pbp = pbp[pbp['is_pass'] | pbp['is_rush']]
         
-        # Offensive splits
-        off_total = pbp.groupby('pos_team')['EPA'].mean().round(3)
-        off_pass = pbp[pbp['is_pass']].groupby('pos_team')['EPA'].mean().round(3)
-        off_rush = pbp[pbp['is_rush']].groupby('pos_team')['EPA'].mean().round(3)
+        off_total = pbp.groupby(pos_team_col)[epa_col].mean().round(3)
+        off_pass = pbp[pbp['is_pass']].groupby(pos_team_col)[epa_col].mean().round(3)
+        off_rush = pbp[pbp['is_rush']].groupby(pos_team_col)[epa_col].mean().round(3)
         
-        # Defensive splits
-        def_total = pbp.groupby('def_pos_team')['EPA'].mean().round(3)
-        def_pass = pbp[pbp['is_pass']].groupby('def_pos_team')['EPA'].mean().round(3)
-        def_rush = pbp[pbp['is_rush']].groupby('def_pos_team')['EPA'].mean().round(3)
+        def_total = pbp.groupby(def_team_col)[epa_col].mean().round(3)
+        def_pass = pbp[pbp['is_pass']].groupby(def_team_col)[epa_col].mean().round(3)
+        def_rush = pbp[pbp['is_rush']].groupby(def_team_col)[epa_col].mean().round(3)
         
-        # Rank them 
         off_total_ranks = off_total.rank(ascending=False, method='min')
         off_pass_ranks = off_pass.rank(ascending=False, method='min')
         off_rush_ranks = off_rush.rank(ascending=False, method='min')
@@ -139,7 +141,6 @@ def fetch_cfb_epa():
         
         epa_map = {}
         for team_name in off_total.index:
-            # Clean up team name formatting to make matching easier
             clean_name = str(team_name).lower().replace("state", "st")
             epa_map[clean_name] = {
                 "off_total": f"{off_total.get(team_name, 0):.2f}",
@@ -179,84 +180,118 @@ def fetch_all_league_stats(league):
         
     return league_stats
 
-def build_football_stats_html(team_name, league, global_stats):
-    """Generates a compact HTML table block for the team's advanced stats."""
+def extract_team_metrics(team_name, league, global_stats):
+    """Extracts and structures team metrics into a flat dict."""
     team_lower = team_name.lower().replace("state", "st")
     mascot = team_name.lower().split()[-1]
     
-    matched_tr_key = None
-    for tr_key in sorted(global_stats["off_ppg"].keys(), key=len, reverse=True):
-        if tr_key == team_lower or f"{tr_key} " in f"{team_lower} ":
-            matched_tr_key = tr_key
+    matched_tr = None
+    for k in sorted(global_stats["off_ppg"].keys(), key=len, reverse=True):
+        if k == team_lower or f"{k} " in f"{team_lower} ":
+            matched_tr = k
             break
+            
+    tr_data = {
+        "off_ppg": global_stats["off_ppg"].get(matched_tr, {"rank": "-", "value": "N/A"}),
+        "def_ppg": global_stats["def_ppg"].get(matched_tr, {"rank": "-", "value": "N/A"}),
+        "off_ypg": global_stats["off_ypg"].get(matched_tr, {"rank": "-", "value": "N/A"}),
+        "def_ypg": global_stats["def_ypg"].get(matched_tr, {"rank": "-", "value": "N/A"})
+    }
 
-    if matched_tr_key:
-        team_data = {
-            "off_ppg": global_stats["off_ppg"].get(matched_tr_key, {"rank": "-", "value": "N/A"}),
-            "def_ppg": global_stats["def_ppg"].get(matched_tr_key, {"rank": "-", "value": "N/A"}),
-            "off_ypg": global_stats["off_ypg"].get(matched_tr_key, {"rank": "-", "value": "N/A"}),
-            "def_ypg": global_stats["def_ypg"].get(matched_tr_key, {"rank": "-", "value": "N/A"})
-        }
-    else:
-        team_data = {k: {"rank": "-", "value": "N/A"} for k in ["off_ppg", "def_ppg", "off_ypg", "def_ypg"]}
-    
-    if team_data["off_ppg"]["value"] == "N/A" and league.lower() != "nfl":
-        return f"<div style='margin-top: 10px; font-size: 11px; color: #a0aec0;'>No FBS leaderboard data available for {team_name}.</div>"
-
-    html = f"<div style='margin-top: 15px; margin-bottom: 5px;'>"
-    html += f"<strong style='font-size: 12px; color: #2d3748;'>📊 {team_name} Rankings:</strong>"
-    html += f"<table style='width: 100%; font-size: 11px; text-align: center; border-collapse: collapse; margin-top: 4px;'>"
-    html += f"<tr style='background-color: #edf2f7; color: #4a5568;'>"
-    html += f"<th style='padding: 3px; text-align: left;'>Category</th>"
-    html += f"<th style='padding: 3px;'>Value</th>"
-    html += f"<th style='padding: 3px;'>Rank</th>"
-    html += f"</tr>"
-    
-    def get_rank_color(rank_str):
-        if not str(rank_str).isdigit(): return "#718096"
-        rank = int(rank_str)
-        if rank <= 12: return "#38a169" 
-        if rank >= 25: return "#e53e3e" 
-        return "#718096" 
-
-    rows = []
-    
+    epa_data = None
     if "epa" in global_stats:
-        epa_data = None
         if league.lower() == "nfl":
             epa_data = global_stats["epa"].get(mascot)
         else:
-            for epa_key, data in global_stats["epa"].items():
-                if epa_key in team_lower or team_lower in epa_key:
+            for k, data in global_stats["epa"].items():
+                if k in team_lower or team_lower in k:
                     epa_data = data
                     break
-                
-        if epa_data:
-            rows.extend([
-                ("Offense Total (EPA)", {"value": epa_data['off_total'], "rank": epa_data['off_total_rank']}),
-                ("Offense Pass (EPA)", {"value": epa_data['off_pass'], "rank": epa_data['off_pass_rank']}),
-                ("Offense Rush (EPA)", {"value": epa_data['off_rush'], "rank": epa_data['off_rush_rank']}),
-                ("Defense Total (EPA)", {"value": epa_data['def_total'], "rank": epa_data['def_total_rank']}),
-                ("Defense Pass (EPA)", {"value": epa_data['def_pass'], "rank": epa_data['def_pass_rank']}),
-                ("Defense Rush (EPA)", {"value": epa_data['def_rush'], "rank": epa_data['def_rush_rank']})
-            ])
+
+    return {"tr": tr_data, "epa": epa_data}
+
+def build_matchup_stats_html(away_team, home_team, league, global_stats):
+    """Builds a compact, 2-column side-by-side matchup table."""
+    away_data = extract_team_metrics(away_team, league, global_stats)
+    home_data = extract_team_metrics(home_team, league, global_stats)
+    
+    if away_data["tr"]["off_ppg"]["value"] == "N/A" and home_data["tr"]["off_ppg"]["value"] == "N/A":
+        return ""
+
+    def get_rank_color(rank_str):
+        if not str(rank_str).isdigit(): return "#718096"
+        rank = int(rank_str)
+        if rank <= 12: return "#2e7d32" 
+        if rank >= 25: return "#c62828" 
+        return "#4a5568"
+
+    rows = []
+    has_epa = away_data["epa"] or home_data["epa"]
+    
+    if has_epa:
+        a_epa = away_data["epa"] or {}
+        h_epa = home_data["epa"] or {}
+        rows.extend([
+            ("Offense Pass (EPA)", a_epa.get('off_pass', '-'), a_epa.get('off_pass_rank', '-'),
+                                   h_epa.get('off_pass', '-'), h_epa.get('off_pass_rank', '-')),
+            ("Offense Rush (EPA)", a_epa.get('off_rush', '-'), a_epa.get('off_rush_rank', '-'),
+                                   h_epa.get('off_rush', '-'), h_epa.get('off_rush_rank', '-')),
+            ("Offense Total (EPA)", a_epa.get('off_total', '-'), a_epa.get('off_total_rank', '-'),
+                                    h_epa.get('off_total', '-'), h_epa.get('off_total_rank', '-')),
+            ("DIVIDER", "", "", "", ""),
+            ("Defense Pass (EPA)", a_epa.get('def_pass', '-'), a_epa.get('def_pass_rank', '-'),
+                                   h_epa.get('def_pass', '-'), h_epa.get('def_pass_rank', '-')),
+            ("Defense Rush (EPA)", a_epa.get('def_rush', '-'), a_epa.get('def_rush_rank', '-'),
+                                   h_epa.get('def_rush', '-'), h_epa.get('def_rush_rank', '-')),
+            ("Defense Total (EPA)", a_epa.get('def_total', '-'), a_epa.get('def_total_rank', '-'),
+                                    h_epa.get('def_total', '-'), h_epa.get('def_total_rank', '-')),
+            ("DIVIDER", "", "", "", "")
+        ])
 
     rows.extend([
-        ("Offense (PPG)", team_data['off_ppg']),
-        ("Defense (PPG)", team_data['def_ppg']),
-        ("Offense (YPG)", team_data['off_ypg']),
-        ("Defense (YPG)", team_data['def_ypg'])
+        ("Scoring (PPG)", away_data["tr"]["off_ppg"]["value"], away_data["tr"]["off_ppg"]["rank"],
+                          home_data["tr"]["off_ppg"]["value"], home_data["tr"]["off_ppg"]["rank"]),
+        ("Opp Scoring (PPG)", away_data["tr"]["def_ppg"]["value"], away_data["tr"]["def_ppg"]["rank"],
+                              home_data["tr"]["def_ppg"]["value"], home_data["tr"]["def_ppg"]["rank"]),
+        ("Total Yards (YPG)", away_data["tr"]["off_ypg"]["value"], away_data["tr"]["off_ypg"]["rank"],
+                              home_data["tr"]["off_ypg"]["value"], home_data["tr"]["off_ypg"]["rank"]),
+        ("Opp Yards (YPG)", away_data["tr"]["def_ypg"]["value"], away_data["tr"]["def_ypg"]["rank"],
+                            home_data["tr"]["def_ypg"]["value"], home_data["tr"]["def_ypg"]["rank"])
     ])
-    
-    for label, data in rows:
-        r_color = get_rank_color(data['rank'])
-        html += f"<tr style='border-bottom: 1px solid #e2e8f0;'>"
-        html += f"<td style='padding: 3px; text-align: left; font-weight: bold; color: #4a5568;'>{label}</td>"
-        html += f"<td style='padding: 3px;'>{data['value']}</td>"
-        html += f"<td style='padding: 3px; font-weight: bold; color: {r_color};'>#{data['rank']}</td>"
-        html += f"</tr>"
-        
-    html += "</table></div>"
+
+    html = f"""
+    <div style="margin: 12px 0 8px 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: center;">
+            <thead>
+                <tr style="background-color: #2d3748; color: #ffffff;">
+                    <th style="padding: 6px 8px; width: 35%; text-align: left;">{away_team}</th>
+                    <th style="padding: 6px 4px; width: 30%; color: #cbd5e0; font-weight: normal;">Category</th>
+                    <th style="padding: 6px 8px; width: 35%; text-align: right;">{home_team}</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+
+    for label, a_val, a_rk, h_val, h_rk in rows:
+        if label == "DIVIDER":
+            html += '<tr style="background-color: #edf2f7; height: 3px;"><td colspan="3"></td></tr>'
+            continue
+
+        a_col = get_rank_color(a_rk)
+        h_col = get_rank_color(h_rk)
+
+        a_cell = f"<strong style='color:{a_col};'>#{a_rk}</strong> ({a_val})" if str(a_rk).isdigit() else f"({a_val})"
+        h_cell = f"({h_val}) <strong style='color:{h_col};'>#{h_rk}</strong>" if str(h_rk).isdigit() else f"({h_val})"
+
+        html += f"""
+        <tr style="border-bottom: 1px solid #edf2f7;">
+            <td style="padding: 4px 8px; text-align: left;">{a_cell}</td>
+            <td style="padding: 4px 4px; color: #718096; font-size: 10px;">{label}</td>
+            <td style="padding: 4px 8px; text-align: right;">{h_cell}</td>
+        </tr>
+        """
+
+    html += "</tbody></table></div>"
     return html
 
 # --- TEST BLOCK ---
@@ -266,17 +301,14 @@ if __name__ == '__main__':
     nfl_global_stats = fetch_all_league_stats("NFL")
     cfb_global_stats = fetch_all_league_stats("NCAAF")
     
-    test_teams = [
-        ("Philadelphia Eagles", "NFL", nfl_global_stats),
-        ("Chicago Bears", "NFL", nfl_global_stats),
-        ("Indiana Hoosiers", "NCAAF", cfb_global_stats),
-        ("Ohio State Buckeyes", "NCAAF", cfb_global_stats),
-        ("Delaware Blue Hens", "NCAAF", cfb_global_stats) 
+    test_matchups = [
+        ("Philadelphia Eagles", "Chicago Bears", "NFL", nfl_global_stats),
+        ("Indiana Hoosiers", "Ohio State Buckeyes", "NCAAF", cfb_global_stats)
     ]
     
-    for team, league, global_dict in test_teams:
-        html_block = build_football_stats_html(team, league, global_dict)
-        print(f"\n--- {team} HTML ---")
+    for away, home, league, global_dict in test_matchups:
+        html_block = build_matchup_stats_html(away, home, league, global_dict)
+        print(f"\n--- {away} vs {home} ---")
         print(html_block)
         
     print("\n✅ Module execution complete.")
