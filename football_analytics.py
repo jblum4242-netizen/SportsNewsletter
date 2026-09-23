@@ -17,7 +17,7 @@ def fetch_nfl_stats():
         'CAR': 'panthers', 'CHI': 'bears', 'CIN': 'bengals', 'CLE': 'browns',
         'DAL': 'cowboys', 'DEN': 'broncos', 'DET': 'lions', 'GB': 'packers',
         'HOU': 'texans', 'IND': 'colts', 'JAX': 'jaguars', 'KC': 'chiefs',
-        'LV': 'raiders', 'LAC': 'chargers', 'LAR': 'rams', 'MIA': 'dolphins',
+        'LV': 'raiders', 'LAC': 'chargers', 'LA': 'rams', 'MIA': 'dolphins',
         'MIN': 'vikings', 'NE': 'patriots', 'NO': 'saints', 'NYG': 'giants',
         'NYJ': 'jets', 'PHI': 'eagles', 'PIT': 'steelers', 'SF': '49ers',
         'SEA': 'seahawks', 'TB': 'buccaneers', 'TEN': 'titans', 'WAS': 'commanders'
@@ -192,10 +192,20 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
     away_lower = away_team.lower().replace("state", "st")
     home_lower = home_team.lower().replace("state", "st")
     
-    # Isolate exact dictionary matches
-    away_data = global_stats.get(away_lower.split()[-1] if league.upper() == "NFL" else away_lower, {})
-    home_data = global_stats.get(home_lower.split()[-1] if league.upper() == "NFL" else home_lower, {})
-    
+    away_data = {}
+    home_data = {}
+
+    if league.upper() == "NFL":
+        away_data = global_stats.get(away_lower.split()[-1], {})
+        home_data = global_stats.get(home_lower.split()[-1], {})
+    else:
+        # CFB requires fuzzy matching (e.g. mapping "indiana hoosiers" to "indiana")
+        for k, v in global_stats.items():
+            if k in away_lower or away_lower in k:
+                away_data = v
+            if k in home_lower or home_lower in k:
+                home_data = v
+                
     # Matchup card suppression fallback
     if not away_data and not home_data:
         return ""
