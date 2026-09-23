@@ -140,24 +140,41 @@ def fetch_cfb_stats():
         off_ypg = pbp_valid.groupby([pos_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
         def_ypg = pbp_valid.groupby([def_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
 
-        # --- PPG CALCULATION ---
+ # --- PPG CALCULATION ---
         # Dynamically hunt for scoring columns
-        home_pts_col = 'home_points' if 'home_points' in sched.columns else 'home_score'
-        away_pts_col = 'away_points' if 'away_points' in sched.columns else 'away_score'
-        
+        home_pts_col = 'home_points'
+        for col in ['home_points', 'home_score', 'homeScore']:
+            if col in sched.columns: home_pts_col = col; break
+        away_pts_col = 'away_points'
+        for col in ['away_points', 'away_score', 'awayScore']:
+            if col in sched.columns: away_pts_col = col; break
+            
+        home_team_col = 'home_team'
+        for col in ['home_team', 'homeTeam', 'home_team_name']:
+            if col in sched.columns: home_team_col = col; break
+        away_team_col = 'away_team'
+        for col in ['away_team', 'awayTeam', 'away_team_name']:
+            if col in sched.columns: away_team_col = col; break
+
         sched_played = sched.dropna(subset=[home_pts_col, away_pts_col])
         
-        home_pts = sched_played.groupby('home_team')[home_pts_col].sum()
-        away_pts = sched_played.groupby('away_team')[away_pts_col].sum()
-        home_gp = sched_played.groupby('home_team')['game_id'].count()
-        away_gp = sched_played.groupby('away_team')['game_id'].count()
+        home_pts = sched_played.groupby(home_team_col)[home_pts_col].sum()
+        away_pts = sched_played.groupby(away_team_col)[away_pts_col].sum()
+        home_gp = sched_played.groupby(home_team_col)['game_id'].count()
+        away_gp = sched_played.groupby(away_team_col)['game_id'].count()
         
         tot_pts = home_pts.add(away_pts, fill_value=0)
         tot_gp = home_gp.add(away_gp, fill_value=0)
-        tot_allowed = sched_played.groupby('home_team')[away_pts_col].sum().add(sched_played.groupby('away_team')[home_pts_col].sum(), fill_value=0)
+        tot_allowed = sched_played.groupby(home_team_col)[away_pts_col].sum().add(sched_played.groupby(away_team_col)[home_pts_col].sum(), fill_value=0)
         
-        off_ppg = (tot_pts / tot_gp).round(1)
-        def_ppg = (tot_allowed / tot_gp).round(1)
+        # Convert to dictionaries for fuzzy matching
+        sched_off_ppg = (tot_pts / tot_gp.replace(0, 1)).round(1)
+        sched_def_ppg = (tot_allowed / tot_gp.replace(0, 1)).round(1)
+        
+        off_ppg_dict = sched_off_ppg.to_dict()
+        def_ppg_dict = sched_def_ppg.to_dict()
+        off_ppg_rank_dict = sched_off_ppg.rank(ascending=False, method='min').to_dict()
+        def_ppg_rank_dict = sched_def_ppg.rank(ascending=True, method='min').to_dict()
 
         # --- RANKINGS ---
         ranks = {
@@ -168,14 +185,30 @@ def fetch_cfb_stats():
             'def_pass': def_pass.rank(ascending=True, method='min'),
             'def_rush': def_rush.rank(ascending=True, method='min'),
             'off_ypg': off_ypg.rank(ascending=False, method='min'),
-            'def_ypg': def_ypg.rank(ascending=True, method='min'),
-            'off_ppg': off_ppg.rank(ascending=False, method='min'),
-            'def_ppg': def_ppg.rank(ascending=True, method='min')
+            'def_ypg': def_ypg.rank(ascending=True, method='min')
         }
 
         stats_map = {}
         for team_name in off_total.index:
             clean_name = str(team_name).lower().replace("state", "st")
+            
+            # Safely match PPG stats across mismatched team names
+            t_off_ppg, t_def_ppg, t_off_ppg_rk, t_def_ppg_rk = 0.0, 0.0, 999, 999
+            
+            if team_name in off_ppg_dict:
+                t_off_ppg = off_ppg_dict[team_name]
+                t_def_ppg = def_ppg_dict.get(team_name, 0.0)
+                t_off_ppg_rk = off_ppg_rank_dict.get(team_name, 999)
+                t_def_ppg_rk = def_ppg_rank_dict.get(team_name, 999)
+            else:
+                for st, val in off_ppg_dict.items():
+                    if str(team_name).lower() in str(st).lower() or str(st).lower() in str(team_name).lower():
+                        t_off_ppg = val
+                        t_def_ppg = def_ppg_dict.get(st, 0.0)
+                        t_off_ppg_rk = off_ppg_rank_dict.get(st, 999)
+                        t_def_ppg_rk = def_ppg_rank_dict.get(st, 999)
+                        break
+
             stats_map[clean_name] = {
                 "off_total": f"{off_total.get(team_name, 0):.2f}", "off_total_rank": f"{int(ranks['off_total'].get(team_name, 999))}",
                 "off_pass": f"{off_pass.get(team_name, 0):.2f}", "off_pass_rank": f"{int(ranks['off_pass'].get(team_name, 999))}",
@@ -185,8 +218,8 @@ def fetch_cfb_stats():
                 "def_rush": f"{def_rush.get(team_name, 0):.2f}", "def_rush_rank": f"{int(ranks['def_rush'].get(team_name, 999))}",
                 "off_ypg": f"{off_ypg.get(team_name, 0):.1f}", "off_ypg_rank": f"{int(ranks['off_ypg'].get(team_name, 999))}",
                 "def_ypg": f"{def_ypg.get(team_name, 0):.1f}", "def_ypg_rank": f"{int(ranks['def_ypg'].get(team_name, 999))}",
-                "off_ppg": f"{off_ppg.get(team_name, 0):.1f}", "off_ppg_rank": f"{int(ranks['off_ppg'].get(team_name, 999))}",
-                "def_ppg": f"{def_ppg.get(team_name, 0):.1f}", "def_ppg_rank": f"{int(ranks['def_ppg'].get(team_name, 999))}",
+                "off_ppg": f"{t_off_ppg:.1f}", "off_ppg_rank": f"{int(t_off_ppg_rk)}",
+                "def_ppg": f"{t_def_ppg:.1f}", "def_ppg_rank": f"{int(t_def_ppg_rk)}",
             }
         return stats_map
     except Exception as e:
