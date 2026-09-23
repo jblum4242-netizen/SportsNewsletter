@@ -106,6 +106,7 @@ def fetch_cfb_stats():
         pbp = sdv.cfb.load_cfb_pbp(seasons=[current_year], return_as_pandas=True)
         sched = sdv.cfb.load_cfb_schedule(seasons=[current_year], return_as_pandas=True)
         
+        # --- DYNAMIC COLUMN MAPPING ---
         epa_col = 'EPA' if 'EPA' in pbp.columns else 'epa'
         pos_team_col = 'pos_team' if 'pos_team' in pbp.columns else 'posteam'
         def_team_col = 'def_pos_team' if 'def_pos_team' in pbp.columns else 'defteam'
@@ -113,6 +114,13 @@ def fetch_cfb_stats():
         play_type_col = 'play_type' if 'play_type' in pbp.columns else 'type_text'
         if play_type_col not in pbp.columns:
             play_type_col = [c for c in pbp.columns if 'type' in c.lower()][0]
+
+        # Dynamically hunt for the yards column (handles both ESPN and CFBD formats)
+        yards_col = 'yards_gained'
+        for col in ['yards_gained', 'statYardage', 'yards', 'yds', 'net_yards', 'yds_gained']:
+            if col in pbp.columns:
+                yards_col = col
+                break
 
         # --- EPA & YARDS CALCULATION ---
         pbp_valid = pbp.dropna(subset=[epa_col, play_type_col])
@@ -128,21 +136,25 @@ def fetch_cfb_stats():
         def_pass = pbp_valid[pbp_valid['is_pass']].groupby(def_team_col)[epa_col].mean().round(3)
         def_rush = pbp_valid[pbp_valid['is_rush']].groupby(def_team_col)[epa_col].mean().round(3)
 
-        yards_col = 'yards_gained' if 'yards_gained' in pbp_valid.columns else 'yds_pnlty'
+        # Aggregate Yards Per Game
         off_ypg = pbp_valid.groupby([pos_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
         def_ypg = pbp_valid.groupby([def_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
 
         # --- PPG CALCULATION ---
-        sched_played = sched.dropna(subset=['home_points', 'away_points'])
+        # Dynamically hunt for scoring columns
+        home_pts_col = 'home_points' if 'home_points' in sched.columns else 'home_score'
+        away_pts_col = 'away_points' if 'away_points' in sched.columns else 'away_score'
         
-        home_pts = sched_played.groupby('home_team')['home_points'].sum()
-        away_pts = sched_played.groupby('away_team')['away_points'].sum()
+        sched_played = sched.dropna(subset=[home_pts_col, away_pts_col])
+        
+        home_pts = sched_played.groupby('home_team')[home_pts_col].sum()
+        away_pts = sched_played.groupby('away_team')[away_pts_col].sum()
         home_gp = sched_played.groupby('home_team')['game_id'].count()
         away_gp = sched_played.groupby('away_team')['game_id'].count()
         
         tot_pts = home_pts.add(away_pts, fill_value=0)
         tot_gp = home_gp.add(away_gp, fill_value=0)
-        tot_allowed = sched_played.groupby('home_team')['away_points'].sum().add(sched_played.groupby('away_team')['home_points'].sum(), fill_value=0)
+        tot_allowed = sched_played.groupby('home_team')[away_pts_col].sum().add(sched_played.groupby('away_team')[home_pts_col].sum(), fill_value=0)
         
         off_ppg = (tot_pts / tot_gp).round(1)
         def_ppg = (tot_allowed / tot_gp).round(1)
@@ -180,6 +192,7 @@ def fetch_cfb_stats():
     except Exception as e:
         print(f"⚠️ Error calculating CFB metrics natively: {e}")
         return {}
+
 
 def fetch_all_league_stats(league):
     """Router for master stat building."""
