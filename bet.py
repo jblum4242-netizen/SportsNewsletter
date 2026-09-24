@@ -64,16 +64,20 @@ def fetch_live_odds_clean(sport_key):
     params = {
         "apiKey": ODDS_API_KEY, 
         "regions": "us", 
-        "markets": "h2h,spreads", 
+        "markets": "h2h,spreads,totals", 
         "bookmakers": "fanduel,draftkings,betmgm,caesars", 
         "oddsFormat": "american"
     }
     try:
         res = requests.get(url, params=params, timeout=10)
-        # Check quota remaining in response headers
+        
+        # Check quota remaining and the cost of the call in response headers
         remaining = res.headers.get("x-requests-remaining")
+        last_cost = res.headers.get("x-requests-last")
+        
         if remaining:
-            print(f"📊 Odds API quota remaining: {remaining}")
+            print(f"📊 Odds API quota remaining: {remaining} (Cost: {last_cost})")
+            
         if res.status_code == 200:
             return res.json()
         else:
@@ -1261,29 +1265,68 @@ def build_sports_briefings():
                 pass  # Fall back to original odds text if parsing encounters unusual formatting
 
         # --- ODDS & CONSENSUS TABLE ---
-        block_html += (
-            f"<table style='width: 100%; font-size: 13px; border-collapse: collapse;'>"
-            f"<tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>FanDuel Lines:</td>"
-            f"<td style='font-weight: 700; color: #0f172a;'>{display_odds}</td></tr>"
-        )
+        if league.upper() == "EPL":
+            # Keep the classic single-line layout for Soccer's 3-way Moneyline
+            block_html += (
+                f"<table style='width: 100%; font-size: 13px; border-collapse: collapse;'>"
+                f"<tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>FanDuel Lines:</td>"
+                f"<td style='font-weight: 700; color: #0f172a;'>{display_odds}</td></tr>"
+            )
+        else:
+            # Use the new Spread | ML | Total table for NFL, NCAAF, MLB, etc.
+            # (Assuming you extracted away_spread, away_ml, total, etc. from The Odds API)
+            away_spread = game.get('away_spread', '-')
+            home_spread = game.get('home_spread', '-')
+            away_ml = game.get('away_ml', '-')
+            home_ml = game.get('home_ml', '-')
+            total_val = game.get('total', '-')
+
+            block_html += (
+                f"<table style='width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; text-align: center;'>"
+                f"    <thead>"
+                f"        <tr style='background: #edf2f7; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;'>"
+                f"            <th style='padding: 6px; text-align: left;'>Team</th>"
+                f"            <th style='padding: 6px;'>Spread</th>"
+                f"            <th style='padding: 6px;'>Moneyline</th>"
+                f"            <th style='padding: 6px;'>Total</th>"
+                f"        </tr>"
+                f"    </thead>"
+                f"    <tbody>"
+                f"        <tr style='border-bottom: 1px solid #e2e8f0;'>"
+                f"            <td style='padding: 6px; text-align: left; font-weight: 600;'>{away_team}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{away_spread}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #2563eb;'>{away_ml}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>O {total_val}</td>"
+                f"        </tr>"
+                f"        <tr>"
+                f"            <td style='padding: 6px; text-align: left; font-weight: 600;'>{home_team}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{home_spread}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #2563eb;'>{home_ml}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>U {total_val}</td>"
+                f"        </tr>"
+                f"    </tbody>"
+                f"</table>"
+                f"<table style='width: 100%; font-size: 13px; border-collapse: collapse;'>"
+            )
         
         if "MLB" in league.upper():
-            block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Probable Pitchers:</td><td style='color: #2563eb; font-weight: 700;'>⚾ {game.get('pitchers', 'TBD vs TBD')}</td></tr>"
+            block_html += f"<tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>Probable Pitchers:</td><td style='color: #2563eb; font-weight: 700;'>⚾ {game.get('pitchers', 'TBD vs TBD')}</td></tr>"
         if league.upper() != "EPL":
-            block_html += f"<tr><td style='padding: 6px 0; color: #64748b;'>Covers Consensus:</td><td>{format_consensus(game['covers'])}</td></tr>"
+            block_html += f"<tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>Covers Consensus:</td><td>{format_consensus(game.get('covers', {}))}</td></tr>"
             
-        block_html += f"<tr><td style='padding: 6px 0; color: #64748b; font-weight: 700; vertical-align: top;'>Global News:</td><td>{game.get('news_html', '')}</td></tr></table>"
-
-        # --- INJURIES & ADVANCED STATS BLOCK ---
-        if league.upper() != "EPL":
-            block_html += game.get('injury_html', '')
-
-        # Side-by-side EPA / PPG / YPG table (NFL & NCAAF)
-        block_html += matchup_stats_html
+        block_html += f"<tr><td style='padding: 6px 0; color: #64748b; font-weight: 700; vertical-align: top; width: 28%;'>Global News:</td><td>{game.get('news_html', '')}</td></tr></table>"
 
         # --- FORM / LAST 5 GAMES LOGS ---
         if league.upper() == "EPL":
-            block_html += away_injuries + away_last_5_html + home_injuries + home_last_5_html
+            if away_injuries or home_injuries:
+                block_html += (
+                    f"<details style='margin-bottom: 15px;'>"
+                    f"<summary style='cursor: pointer; font-size: 13px; font-weight: 700; color: #dc2626; background: #fef2f2; padding: 8px 12px; border-radius: 6px; border: 1px solid #fca5a5;'>"
+                    f"🏥 View {away_team} & {home_team} Injuries</summary>"
+                    f"<div style='margin-top: 10px;'>{away_injuries}{home_injuries}</div>"
+                    f"</details>"
+                )
+            block_html += away_last_5_html + home_last_5_html
         else:
             block_html += away_last_5_html
             if "MLB" in league.upper() and game.get('away_pitcher_logs'):

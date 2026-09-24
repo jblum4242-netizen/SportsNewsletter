@@ -42,6 +42,13 @@ def fetch_nfl_stats():
         off_ypg = pbp_valid.groupby(['posteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean().round(1)
         def_ypg = pbp_valid.groupby(['defteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean().round(1)
 
+        # --- SUCCESS RATE CALCULATION ---
+        if 'success' not in pbp_valid.columns:
+            pbp_valid['success'] = (pbp_valid['epa'] > 0).astype(int)
+            
+        off_success = (pbp_valid.groupby('posteam')['success'].mean() * 100).round(1)
+        def_success = (pbp_valid.groupby('defteam')['success'].mean() * 100).round(1)
+
         # --- PPG CALCULATION ---
         sched_played = sched.dropna(subset=['home_score', 'away_score'])
         
@@ -68,7 +75,9 @@ def fetch_nfl_stats():
             'off_ypg': off_ypg.rank(ascending=False, method='min'),
             'def_ypg': def_ypg.rank(ascending=True, method='min'),
             'off_ppg': off_ppg.rank(ascending=False, method='min'),
-            'def_ppg': def_ppg.rank(ascending=True, method='min')
+            'def_ppg': def_ppg.rank(ascending=True, method='min'),
+            'off_success': off_success.rank(ascending=False, method='min'),
+            'def_success': def_success.rank(ascending=True, method='min')
         }
 
         stats_map = {}
@@ -85,6 +94,8 @@ def fetch_nfl_stats():
                     "def_ypg": f"{def_ypg.get(abbr, 0):.1f}", "def_ypg_rank": f"{int(ranks['def_ypg'].get(abbr, 99))}",
                     "off_ppg": f"{off_ppg.get(abbr, 0):.1f}", "off_ppg_rank": f"{int(ranks['off_ppg'].get(abbr, 99))}",
                     "def_ppg": f"{def_ppg.get(abbr, 0):.1f}", "def_ppg_rank": f"{int(ranks['def_ppg'].get(abbr, 99))}",
+                    "off_success": f"{off_success.get(abbr, 0):.1f}%", "off_success_rank": f"{int(ranks['off_success'].get(abbr, 99))}",
+                    "def_success": f"{def_success.get(abbr, 0):.1f}%", "def_success_rank": f"{int(ranks['def_success'].get(abbr, 99))}",
                 }
         return stats_map
     except Exception as e:
@@ -140,6 +151,13 @@ def fetch_cfb_stats():
         off_ypg = pbp_valid.groupby([pos_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
         def_ypg = pbp_valid.groupby([def_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
 
+        # --- SUCCESS RATE CALCULATION ---
+        if 'success' not in pbp_valid.columns:
+            pbp_valid['success'] = (pbp_valid[epa_col] > 0).astype(int)
+            
+        off_success = (pbp_valid.groupby(pos_team_col)['success'].mean() * 100).round(1)
+        def_success = (pbp_valid.groupby(def_team_col)['success'].mean() * 100).round(1)
+
  # --- PPG CALCULATION ---
         # Dynamically hunt for scoring columns
         home_pts_col = 'home_points'
@@ -185,7 +203,9 @@ def fetch_cfb_stats():
             'def_pass': def_pass.rank(ascending=True, method='min'),
             'def_rush': def_rush.rank(ascending=True, method='min'),
             'off_ypg': off_ypg.rank(ascending=False, method='min'),
-            'def_ypg': def_ypg.rank(ascending=True, method='min')
+            'def_ypg': def_ypg.rank(ascending=True, method='min'),
+            'off_success': off_success.rank(ascending=False, method='min'),
+            'def_success': def_success.rank(ascending=True, method='min')
         }
 
         stats_map = {}
@@ -220,6 +240,8 @@ def fetch_cfb_stats():
                 "def_ypg": f"{def_ypg.get(team_name, 0):.1f}", "def_ypg_rank": f"{int(ranks['def_ypg'].get(team_name, 999))}",
                 "off_ppg": f"{t_off_ppg:.1f}", "off_ppg_rank": f"{int(t_off_ppg_rk)}",
                 "def_ppg": f"{t_def_ppg:.1f}", "def_ppg_rank": f"{int(t_def_ppg_rk)}",
+                "off_success": f"{off_success.get(team_name, 0):.1f}%", "off_success_rank": f"{int(ranks['off_success'].get(team_name, 999))}",
+                "def_success": f"{def_success.get(team_name, 0):.1f}%", "def_success_rank": f"{int(ranks['def_success'].get(team_name, 999))}",
             }
         return stats_map
     except Exception as e:
@@ -274,6 +296,8 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
                                home_data.get('off_rush', '-'), home_data.get('off_rush_rank', '-')),
         ("Offense Total (EPA)", away_data.get('off_total', '-'), away_data.get('off_total_rank', '-'),
                                 home_data.get('off_total', '-'), home_data.get('off_total_rank', '-')),
+        ("Offense Success (%)", away_data.get('off_success', '-'), away_data.get('off_success_rank', '-'),
+                                home_data.get('off_success', '-'), home_data.get('off_success_rank', '-')),
         ("DIVIDER", "", "", "", ""),
         ("Defense Pass (EPA)", away_data.get('def_pass', '-'), away_data.get('def_pass_rank', '-'),
                                home_data.get('def_pass', '-'), home_data.get('def_pass_rank', '-')),
@@ -281,6 +305,8 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
                                home_data.get('def_rush', '-'), home_data.get('def_rush_rank', '-')),
         ("Defense Total (EPA)", away_data.get('def_total', '-'), away_data.get('def_total_rank', '-'),
                                 home_data.get('def_total', '-'), home_data.get('def_total_rank', '-')),
+        ("Defense Success (%)", away_data.get('def_success', '-'), away_data.get('def_success_rank', '-'),
+                                home_data.get('def_success', '-'), home_data.get('def_success_rank', '-')),
         ("DIVIDER", "", "", "", ""),
         ("Scoring (PPG)", away_data.get('off_ppg', '-'), away_data.get('off_ppg_rank', '-'),
                           home_data.get('off_ppg', '-'), home_data.get('off_ppg_rank', '-')),
