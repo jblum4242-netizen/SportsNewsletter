@@ -916,10 +916,18 @@ def parse_game_metrics(games, covers_data, tv_data, league):
             
         bookmakers = game.get("bookmakers", [])
         any_book = next((b for b in bookmakers if b.get("key") == "fanduel"), bookmakers[0] if bookmakers else None)
+        
         odds_str = "Lines Off Board"
+        away_spread, home_spread = "-", "-"
+        away_ml, home_ml = "-", "-"
+        game_total = "-"
+
         if any_book and any_book.get("markets"):
             for market in any_book["markets"]:
                 outcomes = market.get("outcomes", [])
+                m_key = market.get("key")
+                
+                # Maintain existing odds_str for EPL and generic fallbacks
                 if len(outcomes) >= 2:
                     away_line = next((o for o in outcomes if o.get("name") == away_team), None)
                     home_line = next((o for o in outcomes if o.get("name") == home_team), None)
@@ -928,17 +936,40 @@ def parse_game_metrics(games, covers_data, tv_data, league):
                     a_disp = f"{away_line.get('name')} ({away_line.get('price')})" if away_line else f"{away_team}"
                     h_disp = f"{home_line.get('name')} ({home_line.get('price')})" if home_line else f"{home_team}"
                     
-                    if market.get("key") == "spreads":
+                    if m_key == "spreads":
                         a_point = f" {away_line.get('point', '')}" if (away_line and away_line.get('point')) else ""
                         h_point = f" {home_line.get('point', '')}" if (home_line and home_line.get('point')) else ""
                         odds_str = f"[{any_book['title']}] {away_line.get('name')}{a_point} ({away_line.get('price')}) | {home_line.get('name')}{h_point} ({home_line.get('price')})"
-                        break
-                        
-                    elif market.get("key") == "h2h" and odds_str == "Lines Off Board":
+                    elif m_key == "h2h" and odds_str == "Lines Off Board":
                         if draw_line:
                             odds_str = f"[{any_book['title']}] {a_disp} | {h_disp} | Draw ({draw_line.get('price')})"
                         else:
                             odds_str = f"[{any_book['title']}] {a_disp} | {h_disp}"
+
+                # New Dashboard Matrix Values
+                if m_key == "spreads":
+                    for out in outcomes:
+                        pt = out.get('point')
+                        val = f"+{pt}" if (isinstance(pt, (int, float)) and pt > 0) else str(pt)
+                        if out.get('name') == away_team:
+                            away_spread = val
+                        elif out.get('name') == home_team:
+                            home_spread = val
+                
+                elif m_key == "h2h":
+                    for out in outcomes:
+                        price = out.get('price')
+                        val = f"+{price}" if (isinstance(price, (int, float)) and price > 0) else str(price)
+                        if out.get('name') == away_team:
+                            away_ml = val
+                        elif out.get('name') == home_team:
+                            home_ml = val
+                            
+                elif m_key == "totals":
+                    for out in outcomes:
+                        if out.get('point'):
+                            game_total = str(out.get('point'))
+                            break
 
         # Synchronous News Fetch
         articles = fetch_game_previews(away_team, home_team)
@@ -981,7 +1012,12 @@ def parse_game_metrics(games, covers_data, tv_data, league):
             "away_pitcher_logs": away_pitcher_logs_html,
             "home_pitcher_logs": home_pitcher_logs_html,
             "injury_html": combined_injury_html,
-            "news_html": news_html 
+            "news_html": news_html,
+            "away_spread": away_spread,
+            "home_spread": home_spread,
+            "away_ml": away_ml,
+            "home_ml": home_ml,
+            "total": game_total
         })
         
     return sorted(parsed_games, key=lambda x: x.get('commence_time', ''))
@@ -1266,17 +1302,24 @@ def build_sports_briefings():
 
         # --- ODDS & CONSENSUS TABLE ---
         if league.upper() == "EPL":
-            # Keep the classic single-line layout for Soccer's 3-way Moneyline
+            # Classic layout for Soccer's 3-way Moneyline
             block_html += (
                 f"<table style='width: 100%; font-size: 13px; border-collapse: collapse;'>"
                 f"<tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>FanDuel Lines:</td>"
                 f"<td style='font-weight: 700; color: #0f172a;'>{display_odds}</td></tr>"
             )
         else:
-            # Use the new Spread | ML | Total table for NFL, NCAAF, MLB, etc.
-            # (Assuming you extracted away_spread, away_ml, total, etc. from The Odds API)
-            away_spread = game.get('away_spread', '-')
-            home_spread = game.get('home_spread', '-')
+            # Extract spread values from display_odds if individual keys aren't in game yet
+            away_sp = game.get('away_spread')
+            home_sp = game.get('home_spread')
+            if not away_sp and "|" in display_odds:
+                try:
+                    parts = display_odds.split(" | ")
+                    away_sp = parts[0].rsplit(" ", 1)[-1]
+                    home_sp = parts[1].rsplit(" ", 1)[-1]
+                except Exception:
+                    away_sp, home_sp = "-", "-"
+
             away_ml = game.get('away_ml', '-')
             home_ml = game.get('home_ml', '-')
             total_val = game.get('total', '-')
@@ -1285,7 +1328,7 @@ def build_sports_briefings():
                 f"<table style='width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; text-align: center;'>"
                 f"    <thead>"
                 f"        <tr style='background: #edf2f7; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;'>"
-                f"            <th style='padding: 6px; text-align: left;'>Team</th>"
+                f"            <th style='padding: 6px 10px; text-align: left;'>Team</th>"
                 f"            <th style='padding: 6px;'>Spread</th>"
                 f"            <th style='padding: 6px;'>Moneyline</th>"
                 f"            <th style='padding: 6px;'>Total</th>"
@@ -1293,16 +1336,16 @@ def build_sports_briefings():
                 f"    </thead>"
                 f"    <tbody>"
                 f"        <tr style='border-bottom: 1px solid #e2e8f0;'>"
-                f"            <td style='padding: 6px; text-align: left; font-weight: 600;'>{away_team}</td>"
-                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{away_spread}</td>"
+                f"            <td style='padding: 6px 10px; text-align: left; font-weight: 600;'>{away_team}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{away_sp or '-'}</td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #2563eb;'>{away_ml}</td>"
-                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>O {total_val}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{'O ' + str(total_val) if total_val != '-' else '-'}</td>"
                 f"        </tr>"
                 f"        <tr>"
-                f"            <td style='padding: 6px; text-align: left; font-weight: 600;'>{home_team}</td>"
-                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{home_spread}</td>"
+                f"            <td style='padding: 6px 10px; text-align: left; font-weight: 600;'>{home_team}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{home_sp or '-'}</td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #2563eb;'>{home_ml}</td>"
-                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>U {total_val}</td>"
+                f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{'U ' + str(total_val) if total_val != '-' else '-'}</td>"
                 f"        </tr>"
                 f"    </tbody>"
                 f"</table>"
@@ -1315,6 +1358,20 @@ def build_sports_briefings():
             block_html += f"<tr><td style='padding: 6px 0; color: #64748b; width: 28%;'>Covers Consensus:</td><td>{format_consensus(game.get('covers', {}))}</td></tr>"
             
         block_html += f"<tr><td style='padding: 6px 0; color: #64748b; font-weight: 700; vertical-align: top; width: 28%;'>Global News:</td><td>{game.get('news_html', '')}</td></tr></table>"
+
+        # --- INJURIES (NON-EPL COLLAPSIBLE) ---
+        injury_content = game.get('injury_html', '')
+        if league.upper() != "EPL" and injury_content and injury_content.strip():
+            block_html += (
+                f"<details style='margin: 12px 0;'>"
+                f"<summary style='cursor: pointer; font-size: 12px; font-weight: 700; color: #dc2626; background: #fef2f2; padding: 8px 12px; border-radius: 6px; border: 1px solid #fca5a5;'>"
+                f"🏥 View {away_team} & {home_team} Injury Report</summary>"
+                f"<div style='margin-top: 8px;'>{injury_content}</div>"
+                f"</details>"
+            )
+
+        # --- ADVANCED STATS TABLE (EPA / PPG / YPG) ---
+        block_html += matchup_stats_html
 
         # --- FORM / LAST 5 GAMES LOGS ---
         if league.upper() == "EPL":
