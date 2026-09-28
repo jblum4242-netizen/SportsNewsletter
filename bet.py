@@ -824,7 +824,7 @@ def is_subsequence(abbrev, full_string):
     it = iter(full_string.lower())
     return all(c in it for c in abbrev.lower())
 
-def parse_game_metrics(games, covers_data, tv_data, league):
+def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league):
     parsed_games = []
     if not games or not isinstance(games, list): 
         return parsed_games
@@ -837,6 +837,20 @@ def parse_game_metrics(games, covers_data, tv_data, league):
     for game in games:
         home_team = game.get("home_team", "Home Team")
         away_team = game.get("away_team", "Away Team")
+        
+        # --- ADD RECORD LOGIC HERE ---
+        def get_rec(t_name):
+            mascot = t_name.lower().split()[-1]
+            su = next((v for k, v in su_data.items() if mascot in k), "")
+            ats = next((v for k, v in ats_data.items() if mascot in k), "")
+            
+            if league.upper() in ["EPL", "NHL"]: return f"({su})" if su else ""
+            if su and ats: return f"({su}, {ats})"
+            return f"({su})" if su else ""
+
+        away_record = get_rec(away_team)
+        home_record = get_rec(home_team)
+
         is_philly = any(p in home_team or p in away_team for p in ["Phili", "76ers", "Phillies", "Flyers"])
         is_phillies_game = any("Philli" in t for t in [home_team, away_team])
         
@@ -1094,6 +1108,60 @@ def check_and_clear_scheduled_cache(cache_file="raw_odds_cache.json"):
         except Exception as e:
             print(f"⚠️ Could not remove cache file: {e}")
 
+def fetch_espn_records(league):
+    """Pulls Straight Up (SU) records and calculates EPL/NHL Points from ESPN."""
+    records_map = {}
+    sport_path = ESPN_SPORT_MAP.get(league.lower())
+    if not sport_path: return records_map
+        
+    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            for event in res.json().get('events', []):
+                for comp in event['competitions'][0]['competitors']:
+                    team_name = comp['team']['displayName'].lower()
+                    su_record = ""
+                    for rec in comp.get('records', []):
+                        if rec.get('type') == 'total':
+                            su_record = rec.get('summary', '')
+                            break
+                            
+                    if league.upper() in ["EPL", "NHL"] and su_record:
+                        parts = su_record.split('-')
+                        if len(parts) >= 3:
+                            # EPL (W*3 + D*1) | NHL (W*2 + OTL*1)
+                            pts = (int(parts[0]) * 3) + int(parts[1]) if league.upper() == "EPL" else (int(parts[0]) * 2) + int(parts[2])
+                            records_map[team_name] = f"{su_record}, {pts} pts"
+                    elif su_record:
+                        records_map[team_name] = su_record
+    except Exception as e: 
+        print(f"ESPN Record Error: {e}")
+    return records_map
+
+def fetch_ats_records(league):
+    """Pulls Against the Spread (ATS) records seamlessly via pandas."""
+    import pandas as pd
+    records = {}
+    url_map = {
+        "NFL": "https://www.teamrankings.com/nfl/trends/ats_trends/",
+        "NCAAF": "https://www.teamrankings.com/ncaa-football/trends/ats_trends/",
+        "NBA": "https://www.teamrankings.com/nba/trends/ats_trends/",
+        "NCAAB": "https://www.teamrankings.com/ncaa-basketball/trends/ats_trends/"
+    }
+    url = url_map.get(league.upper())
+    if not url: return records
+    
+    try:
+        df = pd.read_html(url)[0]
+        for _, row in df.iterrows():
+            team = str(row['Team']).lower()
+            ats = str(row['ATS Record'])
+            records[team] = f"{ats} ATS"
+    except Exception: 
+        pass
+    return records
+
 # ---------------------------------------------------------
 # MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
 # ---------------------------------------------------------
@@ -1147,7 +1215,9 @@ def build_sports_briefings():
             valid_schools = [s.upper() for s in POWER_CONFERENCE_SCHOOLS] + [s.upper() for s in BIG_EAST_HOOPS]
             raw_odds = [g for g in raw_odds if any(s in g.get('away_team', '').upper() or s in g.get('home_team', '').upper() for s in valid_schools)]
 
-        parsed_games = parse_game_metrics(raw_odds, covers_data, tv_data, league)
+        su_data = fetch_espn_records(league)
+        ats_data = fetch_ats_records(league)
+        parsed_games = parse_game_metrics(raw_odds, covers_data, tv_data, su_data, ats_data, league)
             
         final_display_list = []
         for g in parsed_games:
@@ -1340,13 +1410,13 @@ def build_sports_briefings():
                 f"    </thead>"
                 f"    <tbody>"
                 f"        <tr style='border-bottom: 1px solid #e2e8f0;'>"
-                f"            <td style='padding: 6px 10px; text-align: left; font-weight: 600;'>{away_team}</td>"
+                f"            <td style='padding: 6px 10px; text-align: left; font-weight: 600;'>{away_team} <span style='font-size: 10px; color: #64748b; font-weight: normal;'>{game.get('away_record', '')}</span></td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{away_sp or '-'}</td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #2563eb;'>{away_ml}</td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{'O ' + str(total_val) if total_val != '-' else '-'}</td>"
                 f"        </tr>"
                 f"        <tr>"
-                f"            <td style='padding: 6px 10px; text-align: left; font-weight: 600;'>{home_team}</td>"
+                f"            <td style='padding: 6px 10px; text-align: left; font-weight: 600;'>{home_team} <span style='font-size: 10px; color: #64748b; font-weight: normal;'>{game.get('home_record', '')}</span></td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{home_sp or '-'}</td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #2563eb;'>{home_ml}</td>"
                 f"            <td style='padding: 6px; font-weight: 700; color: #0f172a;'>{'U ' + str(total_val) if total_val != '-' else '-'}</td>"
