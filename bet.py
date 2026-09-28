@@ -43,7 +43,9 @@ ESPN_SPORT_MAP = {
     "nhl": "hockey/nhl", 
     "mlb": "baseball/mlb", 
     "nfl": "football/nfl",
-    "epl": "soccer/eng.1"
+    "epl": "soccer/eng.1",
+    "ncaaf": "football/college-football",
+    "ncaab": "basketball/mens-college-basketball"
 }
 
 
@@ -838,15 +840,20 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league):
         home_team = game.get("home_team", "Home Team")
         away_team = game.get("away_team", "Away Team")
         
-        # --- ADD RECORD LOGIC HERE ---
+        # --- ADD W/L RECORD LOGIC HERE ---
         def get_rec(t_name):
             mascot = t_name.lower().split()[-1]
             su = next((v for k, v in su_data.items() if mascot in k), "")
             ats = next((v for k, v in ats_data.items() if mascot in k), "")
             
-            if league.upper() in ["EPL", "NHL"]: return f"({su})" if su else ""
+            if league.upper() in ["EPL", "NHL"]: 
+                return f"({su})" if su else ""
+            
+            # Bulletproof display logic: Show whichever records successfully loaded
             if su and ats: return f"({su}, {ats})"
-            return f"({su})" if su else ""
+            elif su: return f"({su})"
+            elif ats: return f"({ats})"
+            return ""
 
         away_record = get_rec(away_team)
         home_record = get_rec(home_team)
@@ -1109,12 +1116,16 @@ def check_and_clear_scheduled_cache(cache_file="raw_odds_cache.json"):
             print(f"⚠️ Could not remove cache file: {e}")
 
 def fetch_espn_records(league):
-    """Pulls Straight Up (SU) records and calculates EPL/NHL Points from ESPN."""
+    """Pulls SU records. Uses a 7-day lookahead to ensure it catches all games in the slate."""
+    import datetime
     records_map = {}
     sport_path = ESPN_SPORT_MAP.get(league.lower())
     if not sport_path: return records_map
         
-    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
+    start_dt = datetime.datetime.now().strftime("%Y%m%d")
+    end_dt = (datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y%m%d")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={start_dt}-{end_dt}"
+    
     try:
         res = requests.get(url, timeout=10)
         if res.status_code == 200:
@@ -1130,7 +1141,6 @@ def fetch_espn_records(league):
                     if league.upper() in ["EPL", "NHL"] and su_record:
                         parts = su_record.split('-')
                         if len(parts) >= 3:
-                            # EPL (W*3 + D*1) | NHL (W*2 + OTL*1)
                             pts = (int(parts[0]) * 3) + int(parts[1]) if league.upper() == "EPL" else (int(parts[0]) * 2) + int(parts[2])
                             records_map[team_name] = f"{su_record}, {pts} pts"
                     elif su_record:
@@ -1140,8 +1150,10 @@ def fetch_espn_records(league):
     return records_map
 
 def fetch_ats_records(league):
-    """Pulls Against the Spread (ATS) records seamlessly via pandas."""
+    """Pulls ATS records seamlessly via pandas with a masked User-Agent."""
     import pandas as pd
+    import io
+    
     records = {}
     url_map = {
         "NFL": "https://www.teamrankings.com/nfl/trends/ats_trends/",
@@ -1152,15 +1164,20 @@ def fetch_ats_records(league):
     url = url_map.get(league.upper())
     if not url: return records
     
+    # Masking the request as a normal web browser so TeamRankings doesn't block us
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
     try:
-        df = pd.read_html(url)[0]
-        for _, row in df.iterrows():
-            team = str(row['Team']).lower()
-            ats = str(row['ATS Record'])
-            records[team] = f"{ats} ATS"
-    except Exception: 
-        pass
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            df = pd.read_html(io.StringIO(res.text))[0]
+            for _, row in df.iterrows():
+                team = str(row['Team']).lower()
+                ats = str(row['ATS Record'])
+                records[team] = f"{ats} ATS"
+    except Exception as e: 
+        print(f"ATS Record Error: {e}")
     return records
+
 
 # ---------------------------------------------------------
 # MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
