@@ -842,14 +842,27 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league):
         
         # --- ADD W/L RECORD LOGIC HERE ---
         def get_rec(t_name):
-            mascot = t_name.lower().split()[-1]
-            su = next((v for k, v in su_data.items() if mascot in k), "")
-            ats = next((v for k, v in ats_data.items() if mascot in k), "")
+            t_lower = t_name.lower()
+            
+            # Robust matching: Checks if City OR Mascot overlaps between the two sources
+            def find_match(data_dict):
+                for k, v in data_dict.items():
+                    k_lower = k.lower()
+                    if k_lower in t_lower or t_lower in k_lower:
+                        return v
+                    mascot = t_lower.split()[-1]
+                    if mascot in k_lower and len(mascot) > 3:
+                        return v
+                return ""
+
+            su = find_match(su_data)
+            ats = find_match(ats_data)
+            
+            # --- THE DEBUG ALERT ---
+            print(f"  🔎 Matching: {t_name:<25} -> SU: {su:<12} | ATS: {ats}")
             
             if league.upper() in ["EPL", "NHL"]: 
                 return f"({su})" if su else ""
-            
-            # Bulletproof display logic: Show whichever records successfully loaded
             if su and ats: return f"({su}, {ats})"
             elif su: return f"({su})"
             elif ats: return f"({ats})"
@@ -1116,16 +1129,20 @@ def check_and_clear_scheduled_cache(cache_file="raw_odds_cache.json"):
             print(f"⚠️ Could not remove cache file: {e}")
 
 def fetch_espn_records(league):
-    """Pulls SU records. Uses a 7-day lookahead to ensure it catches all games in the slate."""
+    """Pulls SU records. Uses a 7-day lookahead for daily sports, standard week for football."""
     import datetime
     records_map = {}
     sport_path = ESPN_SPORT_MAP.get(league.lower())
     if not sport_path: return records_map
         
-    start_dt = datetime.datetime.now().strftime("%Y%m%d")
-    end_dt = (datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y%m%d")
-    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={start_dt}-{end_dt}"
+    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
     
+    # Only append the date range for daily sports (MLB, NHL, NBA, EPL)
+    if league.upper() not in ["NFL", "NCAAF"]:
+        start_dt = datetime.datetime.now().strftime("%Y%m%d")
+        end_dt = (datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y%m%d")
+        url += f"?dates={start_dt}-{end_dt}"
+        
     try:
         res = requests.get(url, timeout=10)
         if res.status_code == 200:
@@ -1133,10 +1150,12 @@ def fetch_espn_records(league):
                 for comp in event['competitions'][0]['competitors']:
                     team_name = comp['team']['displayName'].lower()
                     su_record = ""
-                    for rec in comp.get('records', []):
-                        if rec.get('type') == 'total':
-                            su_record = rec.get('summary', '')
-                            break
+                    
+                    records_list = comp.get('records', [])
+                    if records_list:
+                        # Grab the 'total' or 'overall' record explicitly, or default to the first one available
+                        rec_obj = next((r for r in records_list if r.get('type') == 'total' or r.get('name') == 'overall'), records_list[0])
+                        su_record = rec_obj.get('summary', '')
                             
                     if league.upper() in ["EPL", "NHL"] and su_record:
                         parts = su_record.split('-')
@@ -1147,6 +1166,8 @@ def fetch_espn_records(league):
                         records_map[team_name] = su_record
     except Exception as e: 
         print(f"ESPN Record Error: {e}")
+        
+    print(f"📊 [SU DATA] {league}: Found {len(records_map)} ESPN records")
     return records_map
 
 def fetch_ats_records(league):
@@ -1176,6 +1197,7 @@ def fetch_ats_records(league):
                 records[team] = f"{ats} ATS"
     except Exception as e: 
         print(f"ATS Record Error: {e}")
+    print(f"📈 [ATS DATA] {league}: Found {len(records)} TeamRankings records")
     return records
 
 
