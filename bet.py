@@ -857,7 +857,11 @@ def parse_game_metrics(games, covers_data, tv_data, league):
                 if local_dt > future_limit:
                     continue 
                     
-                if local_dt.date() != today_date and league.upper() not in ["NFL", "NCAAB", "NCAAF", "EPL"]: 
+                future_leagues = ["NFL", "NCAAB", "NCAAF", "EPL"]
+                if today_date.month > 9 or (today_date.month == 9 and today_date.day >= 15):
+                    future_leagues.append("MLB")
+                    
+                if local_dt.date() != today_date and league.upper() not in future_leagues: 
                     continue  
                 
                 formatted_date = local_dt.strftime("%A, %b %d")
