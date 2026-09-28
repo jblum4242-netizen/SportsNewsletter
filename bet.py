@@ -1057,7 +1057,9 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league):
             "home_spread": home_spread,
             "away_ml": away_ml,
             "home_ml": home_ml,
-            "total": game_total
+            "total": game_total,
+            "away_record": away_record,
+            "home_record": home_record
         })
         
     return sorted(parsed_games, key=lambda x: x.get('commence_time', ''))
@@ -1129,44 +1131,58 @@ def check_and_clear_scheduled_cache(cache_file="raw_odds_cache.json"):
             print(f"⚠️ Could not remove cache file: {e}")
 
 def fetch_espn_records(league):
-    """Pulls SU records. Uses a 7-day lookahead for daily sports, standard week for football."""
+    """Pulls SU records. Uses multiple endpoints to catch off-days and unranked CFB teams."""
     import datetime
+    import requests
     records_map = {}
     sport_path = ESPN_SPORT_MAP.get(league.lower())
     if not sport_path: return records_map
-        
-    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
     
-    # Only append the date range for daily sports (MLB, NHL, NBA, EPL)
-    if league.upper() not in ["NFL", "NCAAF"]:
-        start_dt = datetime.datetime.now().strftime("%Y%m%d")
-        end_dt = (datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y%m%d")
-        url += f"?dates={start_dt}-{end_dt}"
-        
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            for event in res.json().get('events', []):
-                for comp in event['competitions'][0]['competitors']:
-                    team_name = comp['team']['displayName'].lower()
-                    su_record = ""
-                    
-                    records_list = comp.get('records', [])
-                    if records_list:
-                        # Grab the 'total' or 'overall' record explicitly, or default to the first one available
-                        rec_obj = next((r for r in records_list if r.get('type') == 'total' or r.get('name') == 'overall'), records_list[0])
-                        su_record = rec_obj.get('summary', '')
-                            
-                    if league.upper() in ["EPL", "NHL"] and su_record:
-                        parts = su_record.split('-')
-                        if len(parts) >= 3:
-                            pts = (int(parts[0]) * 3) + int(parts[1]) if league.upper() == "EPL" else (int(parts[0]) * 2) + int(parts[2])
-                            records_map[team_name] = f"{su_record}, {pts} pts"
-                    elif su_record:
-                        records_map[team_name] = su_record
-    except Exception as e: 
-        print(f"ESPN Record Error: {e}")
-        
+    urls = []
+    base_url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard"
+    now = datetime.datetime.now()
+    
+    if league.upper() == "NCAAF":
+        urls.append(base_url + "?groups=80&limit=150") # All FBS Teams
+        urls.append(base_url + "?groups=81&limit=150") # All FCS Teams (Delaware)
+    elif league.upper() == "NFL":
+        urls.append(base_url)
+    elif league.upper() == "MLB":
+        # Fetch yesterday (Game 162) and tomorrow to guarantee we catch the teams regardless of off-days
+        urls.append(base_url + f"?dates={(now - datetime.timedelta(days=1)).strftime('%Y%m%d')}")
+        urls.append(base_url + f"?dates={(now + datetime.timedelta(days=1)).strftime('%Y%m%d')}")
+    else:
+        # NBA, NHL, EPL - Check today and tomorrow
+        urls.append(base_url + f"?dates={now.strftime('%Y%m%d')}")
+        urls.append(base_url + f"?dates={(now + datetime.timedelta(days=1)).strftime('%Y%m%d')}")
+
+    for url in urls:
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                for event in res.json().get('events', []):
+                    for comp in event['competitions'][0]['competitors']:
+                        team_name = comp['team']['displayName'].lower()
+                        
+                        # Skip if we already found this team in a previous URL pass
+                        if team_name in records_map: continue
+                        
+                        su_record = ""
+                        records_list = comp.get('records', [])
+                        if records_list:
+                            rec_obj = next((r for r in records_list if r.get('type') == 'total' or r.get('name') == 'overall'), records_list[0])
+                            su_record = rec_obj.get('summary', '')
+                                
+                        if league.upper() in ["EPL", "NHL"] and su_record:
+                            parts = su_record.split('-')
+                            if len(parts) >= 3:
+                                pts = (int(parts[0]) * 3) + int(parts[1]) if league.upper() == "EPL" else (int(parts[0]) * 2) + int(parts[2])
+                                records_map[team_name] = f"{su_record}, {pts} pts"
+                        elif su_record:
+                            records_map[team_name] = su_record
+        except Exception:
+            continue
+            
     print(f"📊 [SU DATA] {league}: Found {len(records_map)} ESPN records")
     return records_map
 
@@ -1178,9 +1194,9 @@ def fetch_ats_records(league):
     records = {}
     url_map = {
         "NFL": "https://www.teamrankings.com/nfl/trends/ats_trends/",
-        "NCAAF": "https://www.teamrankings.com/ncaa-football/trends/ats_trends/",
+        "NCAAF": "https://www.teamrankings.com/ncf/trends/ats_trends/",
         "NBA": "https://www.teamrankings.com/nba/trends/ats_trends/",
-        "NCAAB": "https://www.teamrankings.com/ncaa-basketball/trends/ats_trends/"
+        "NCAAB": "https://www.teamrankings.com/ncb/trends/ats_trends/"
     }
     url = url_map.get(league.upper())
     if not url: return records
