@@ -19,6 +19,8 @@ from epl_analytics import fetch_epl_xg_form, fetch_epl_head_to_head, fetch_epl_i
 
 import football_analytics as football_news
 
+import baseball_analytics as baseball_news
+
 # --- PERSONAL DATA CREDENTIALS ---
 SENDER_EMAIL = "jblum4242@gmail.com"
 SENDER_PASSWORD = "lzygskznkqcejpva"
@@ -866,10 +868,10 @@ def parse_game_metrics(games, covers_data, tv_data, league):
         away_pitcher_logs_html = ""
         home_pitcher_logs_html = ""
         if "MLB" in league.upper():
-            p_data = fetch_mlb_pitcher_data()
+            p_data = baseball_news.fetch_mlb_pitcher_data(away_team, home_team)
             pitcher_string = p_data["string"]
-            away_pitcher_logs_html = build_pitcher_logs_html(p_data["away_pitcher_id"], p_data["away_pitcher_name"], p_data["home_team_name"])
-            home_pitcher_logs_html = build_pitcher_logs_html(p_data["home_pitcher_id"], p_data["home_pitcher_name"], p_data["away_team_name"])
+            away_pitcher_logs_html = baseball_news.build_pitcher_logs_html(p_data["away_pitcher_id"], p_data["away_pitcher_name"], p_data["home_team_name"])
+            home_pitcher_logs_html = baseball_news.build_pitcher_logs_html(p_data["home_pitcher_id"], p_data["home_pitcher_name"], p_data["away_team_name"])
 
         # Covers Consensus Matching (Mascot & Full-name Subsequence)
         away_cov, home_cov = "50%", "50%"
@@ -1140,8 +1142,6 @@ def build_sports_briefings():
         elif league.upper() == "NCAAB":
             valid_schools = [s.upper() for s in POWER_CONFERENCE_SCHOOLS] + [s.upper() for s in BIG_EAST_HOOPS]
             raw_odds = [g for g in raw_odds if any(s in g.get('away_team', '').upper() or s in g.get('home_team', '').upper() for s in valid_schools)]
-        elif "MLB" in league.upper():
-            raw_odds = [g for g in raw_odds if "Philli" in g.get('away_team', '') or "Philli" in g.get('home_team', '')]
 
         parsed_games = parse_game_metrics(raw_odds, covers_data, tv_data, league)
             
@@ -1419,9 +1419,8 @@ def build_sports_briefings():
         boards_html += f"<div id='tab-{l_id}' class='tab-content'>"
         
         # 1. League-Specific Upcoming Schedule Table at Top
-        # 1. League-Specific Upcoming Schedule Table at Top
         if league.upper() == "MLB":
-            league_schedule_games = fetch_phillies_7_day_schedule()
+            league_schedule_games = baseball_news.fetch_mlb_7_day_schedule()
         else:
             league_schedule_games = [g for g in all_monitored_games if g['league'].upper() == league.upper()]
             
