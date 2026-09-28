@@ -21,6 +21,8 @@ import football_analytics as football_news
 
 import baseball_analytics as baseball_news
 
+import hockey_analytics
+
 # --- PERSONAL DATA CREDENTIALS ---
 SENDER_EMAIL = "jblum4242@gmail.com"
 SENDER_PASSWORD = "lzygskznkqcejpva"
@@ -835,7 +837,7 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league):
     now_eastern = datetime.datetime.now(eastern_tz)
     today_date = now_eastern.date()
     future_limit = now_eastern + datetime.timedelta(days=7)
-        
+       
     for game in games:
         home_team = game.get("home_team", "Home Team")
         away_team = game.get("away_team", "Away Team")
@@ -1187,33 +1189,44 @@ def fetch_espn_records(league):
     return records_map
 
 def fetch_ats_records(league):
-    """Pulls ATS records seamlessly via pandas with a masked User-Agent."""
+    """Pulls ATS / Run Line records seamlessly via pandas with a masked User-Agent."""
     import pandas as pd
     import io
+    import requests
     
     records = {}
     url_map = {
         "NFL": "https://www.teamrankings.com/nfl/trends/ats_trends/",
         "NCAAF": "https://www.teamrankings.com/ncf/trends/ats_trends/",
         "NBA": "https://www.teamrankings.com/nba/trends/ats_trends/",
-        "NCAAB": "https://www.teamrankings.com/ncb/trends/ats_trends/"
+        "NCAAB": "https://www.teamrankings.com/ncb/trends/ats_trends/",
+        "MLB": "https://www.teamrankings.com/mlb/trends/ats_trends/"
     }
+    
     url = url_map.get(league.upper())
     if not url: return records
     
-    # Masking the request as a normal web browser so TeamRankings doesn't block us
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             df = pd.read_html(io.StringIO(res.text))[0]
+            
+            # Dynamically select the record column based on the sport's labeling
+            if 'ATS Record' in df.columns:
+                record_col = 'ATS Record'
+            elif 'Run Line Record' in df.columns:
+                record_col = 'Run Line Record'
+            else:
+                record_col = df.columns[1] # Default fallback to the second column
+            
             for _, row in df.iterrows():
-                team = str(row['Team']).lower()
-                ats = str(row['ATS Record'])
+                team = str(row[df.columns[0]]).lower()
+                ats = str(row[record_col])
                 records[team] = f"{ats} ATS"
-    except Exception as e: 
-        print(f"ATS Record Error: {e}")
-    print(f"📈 [ATS DATA] {league}: Found {len(records)} TeamRankings records")
+    except Exception as e:
+        pass
+        
     return records
 
 
@@ -1226,6 +1239,10 @@ def build_sports_briefings():
         "NFL": football_news.fetch_all_league_stats("NFL"),
         "NCAAF": football_news.fetch_all_league_stats("NCAAF")
     }
+
+    nhl_official = hockey_analytics.fetch_official_nhl_stats() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
+    nhl_advanced = hockey_analytics.fetch_moneypuck_stats() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
+
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
     today_date = now_eastern.date()
@@ -1387,11 +1404,13 @@ def build_sports_briefings():
             away_injuries = ""
             home_injuries = ""
 
-        # --- ADVANCED FOOTBALL STATS (NFL & NCAAF) ---
+        # --- ADVANCED STATS (NFL, NCAAF, NHL) ---
         matchup_stats_html = ""
         if league.upper() in ["NFL", "NCAAF"]:
             global_data = football_stats.get(league.upper(), {})
             matchup_stats_html = football_news.build_matchup_stats_html(clean_away, clean_home, league, global_data)
+        elif league.upper() == "NHL":
+            matchup_stats_html = hockey_analytics.build_nhl_matchup_html(clean_away, clean_home, nhl_official, nhl_advanced)
 
         # --- CARD HEADER (TITLE + BROADCAST INFO) ---
         block_html += (
