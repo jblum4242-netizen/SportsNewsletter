@@ -667,16 +667,17 @@ def fetch_last_5_games(team_name, league):
                 has_total = any(h in headers_text for h in ['O/U', 'TOTAL', 'OU'])
                 
                 if (has_score and (has_line or has_total)) or ('OPPONENT' in headers_text and has_score):
-                    # Check the heading preceding the table to filter out preseason AND past seasons
-                    prev_heading = tbl.find_previous(['h2', 'h3', 'h4', 'h5', 'div'])
+                    # Strictly search heading tags. DO NOT include 'div'.
+                    prev_heading = tbl.find_previous(['h2', 'h3', 'h4', 'h5'])
                     if prev_heading:
-                        heading_text = prev_heading.text.lower()
+                        heading_text = prev_heading.get_text(separator=' ', strip=True).lower()
+                        
                         # Skip exhibition/preseason tables
                         if 'pre season' in heading_text or 'preseason' in heading_text:
                             continue
-                        # Skip past season accordions (Covers puts years in past season headers like "2025-2026")
-                        import re
-                        if re.search(r'20\d{2}', heading_text):
+                            
+                        # Skip past season accordions (Covers labels them "2025-2026 Season")
+                        if '2025' in heading_text or '2024' in heading_text:
                             continue
                         
                     past_results_table = tbl
@@ -873,7 +874,7 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league):
             ats = find_match(ats_data)
             
             # --- THE DEBUG ALERT ---
-            print(f"  🔎 Matching: {t_name:<25} -> SU: {su:<12} | ATS: {ats}")
+            #print(f"  🔎 Matching: {t_name:<25} -> SU: {su:<12} | ATS: {ats}")
             
             if league.upper() in ["EPL", "NHL"]: 
                 return f"({su})" if su else ""
@@ -1593,7 +1594,7 @@ def build_sports_briefings():
             league_schedule_games = [g for g in all_monitored_games if g['league'].upper() == league.upper()]
             days_label = "7 Days"   
 
-        boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule (7 Days)</h3>"
+        boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
         boards_html += render_calendar_table(league_schedule_games, show_league_badge=False)
         boards_html += "</div>"
         
