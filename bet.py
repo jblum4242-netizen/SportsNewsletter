@@ -667,6 +667,18 @@ def fetch_last_5_games(team_name, league):
                 has_total = any(h in headers_text for h in ['O/U', 'TOTAL', 'OU'])
                 
                 if (has_score and (has_line or has_total)) or ('OPPONENT' in headers_text and has_score):
+                    # Check the heading preceding the table to filter out preseason AND past seasons
+                    prev_heading = tbl.find_previous(['h2', 'h3', 'h4', 'h5', 'div'])
+                    if prev_heading:
+                        heading_text = prev_heading.text.lower()
+                        # Skip exhibition/preseason tables
+                        if 'pre season' in heading_text or 'preseason' in heading_text:
+                            continue
+                        # Skip past season accordions (Covers puts years in past season headers like "2025-2026")
+                        import re
+                        if re.search(r'20\d{2}', heading_text):
+                            continue
+                        
                     past_results_table = tbl
                     break
                     
@@ -1566,12 +1578,20 @@ def build_sports_briefings():
         dynamic_nav_buttons += f"<button class='tab-btn' id='btn-{l_id}' onclick=\"switchTab('{l_id}')\">🏆 {league}</button>"
         boards_html += f"<div id='tab-{l_id}' class='tab-content'>"
         
-        # 1. League-Specific Upcoming Schedule Table at Top
+# 1. League-Specific Schedule Table at Top (1-Day vs 7-Day filter)
         if league.upper() == "MLB":
             league_schedule_games = baseball_news.fetch_mlb_7_day_schedule()
+            days_label = "7 Days"
+        elif league.upper() in ["NHL", "NBA"]:
+            # Restrict NHL and NBA to today's date only
+            league_schedule_games = [
+                g for g in all_monitored_games 
+                if g['league'].upper() == league.upper() and g['game_datetime'].date() == today_date
+            ]
+            days_label = "Today"
         else:
             league_schedule_games = [g for g in all_monitored_games if g['league'].upper() == league.upper()]
-            
+            days_label = "7 Days"   
 
         boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule (7 Days)</h3>"
         boards_html += render_calendar_table(league_schedule_games, show_league_badge=False)
