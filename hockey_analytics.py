@@ -18,16 +18,16 @@ def fetch_official_nhl_stats():
                 if not team_name:
                     continue
                     
-                # Build the L10 string safely
-                l10_wins = team.get('l10Wins', 0)
-                l10_losses = team.get('l10Losses', 0)
-                l10_ot = team.get('l10OtLosses', 0)
+                # Build the Regulation Record string
+                reg_wins = team.get('regulationWins', 0)
+                losses = team.get('losses', 0)
+                ot_losses = team.get('otLosses', 0)
                     
                 stats_dict[team_name] = {
                     'goal_diff': team.get('goalDifferential', 0),
                     'pp_pct': team.get('powerPlayPctg', 0.0),
                     'pk_pct': team.get('penaltyKillPctg', 0.0),
-                    'l10_record': f"{l10_wins}-{l10_losses}-{l10_ot}"
+                    'reg_record': f"{reg_wins}-{losses}-{ot_losses}"
                 }
         return stats_dict
     except Exception as e:
@@ -50,6 +50,13 @@ def fetch_moneypuck_stats():
             # Grab the pre-calculated percentages and format them for display
             df_5v5['CF%'] = (df_5v5['corsiPercentage'] * 100).round(1)
             df_5v5['xGF%'] = (df_5v5['xGoalsPercentage'] * 100).round(1)
+            
+            # Add the new Advanced Metrics
+            df_5v5['PDO'] = (df_5v5['pdo'] * 100).round(1)
+            df_5v5['Save%_Above_x'] = (df_5v5['savePctAboveExpected'] * 100).round(2)
+            df_5v5['HD_xGF%'] = (df_5v5['highDangerxGoalsPercentage'] * 100).round(1)
+            df_5v5['SF/60'] = ((df_5v5['shotsOnGoalFor'] / df_5v5['icetime']) * 60).round(1)
+            df_5v5['SA/60'] = ((df_5v5['shotsOnGoalAgainst'] / df_5v5['icetime']) * 60).round(1)
             
             return df_5v5.set_index('team').to_dict(orient='index')
         return {}
@@ -115,12 +122,17 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
                 f"</tr>")
 
     # Inject Data Rows
+    html += row("Regulation Record (API)", a_off.get('reg_record', '-'), h_off.get('reg_record', '-'), True)
     html += row("Goal Differential (API)", a_off.get('goal_diff', '-'), h_off.get('goal_diff', '-'), True)
     html += row("Power Play (API)", a_off.get('pp_pct', '-'), h_off.get('pp_pct', '-'), True, True)
     html += row("Penalty Kill (API)", a_off.get('pk_pct', '-'), h_off.get('pk_pct', '-'), True, True)
-    html += row("Last 10 (API)", a_off.get('l10_record', '-'), h_off.get('l10_record', '-'), True)
+    html += row("PDO (MP)", a_mp.get('PDO', '-'), h_mp.get('PDO', '-'), True)
+    html += row("Save % Above Expected (MP)", a_mp.get('Save%_Above_x', '-'), h_mp.get('Save%_Above_x', '-'), True, True)
+    html += row("High Danger xGF% (MP)", a_mp.get('HD_xGF%', '-'), h_mp.get('HD_xGF%', '-'), True, True)
     html += row("5v5 Expected Goals (MP)", a_mp.get('xGF%', '-'), h_mp.get('xGF%', '-'), True, True)
     html += row("5v5 Corsi (MP)", a_mp.get('CF%', '-'), h_mp.get('CF%', '-'), True, True)
+    html += row("Shots For / 60 (MP)", a_mp.get('SF/60', '-'), h_mp.get('SF/60', '-'), True)
+    html += row("Shots Against / 60 (MP)", a_mp.get('SA/60', '-'), h_mp.get('SA/60', '-'), False)
 
     html += "</table>"
     return html
@@ -141,7 +153,7 @@ if __name__ == "__main__":
     print(f"Found MoneyPuck stats for {len(mp_data)} teams.")
     if mp_data:
         sample_mp = "PHI" if "PHI" in mp_data else next(iter(mp_data.keys()))
-        print(f"Sample MoneyPuck ({sample_mp}): xGF% {mp_data[sample_mp].get('xGF%')} | CF% {mp_data[sample_mp].get('CF%')}")
+        print(f"Sample MoneyPuck ({sample_mp}): HD_xGF% {mp_data[sample_mp].get('HD_xGF%')} | PDO {mp_data[sample_mp].get('PDO')}")
 
     print("\n🧱 Testing HTML Builder...")
     html_out = build_nhl_matchup_html("Philadelphia Flyers", "New York Rangers", nhl_data, mp_data)
