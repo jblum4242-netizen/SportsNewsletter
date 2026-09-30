@@ -667,19 +667,21 @@ def fetch_last_5_games(team_name, league):
                 has_total = any(h in headers_text for h in ['O/U', 'TOTAL', 'OU'])
                 
                 if (has_score and (has_line or has_total)) or ('OPPONENT' in headers_text and has_score):
-                    # Strictly search heading tags. DO NOT include 'div'.
-                    prev_heading = tbl.find_previous(['h2', 'h3', 'h4', 'h5'])
-                    if prev_heading:
-                        heading_text = prev_heading.get_text(separator=' ', strip=True).lower()
+                    # Combine the nearest ~20 visible text elements immediately preceding the table
+                    prev_texts = [
+                        t.strip().lower() for t in tbl.find_all_previous(string=True, limit=20) 
+                        if len(t.strip()) > 2
+                    ]
+                    combined_text = " ".join(prev_texts)
+                    
+                    # 1. Skip Preseason / Exhibition tables
+                    if 'pre season' in combined_text or 'preseason' in combined_text:
+                        continue
                         
-                        # Skip exhibition/preseason tables
-                        if 'pre season' in heading_text or 'preseason' in heading_text:
-                            continue
-                            
-                        # Skip past season accordions (Covers labels them "2025-2026 Season")
-                        if '2025' in heading_text or '2024' in heading_text:
-                            continue
-                        
+                    # 2. Skip past seasons (blocks anything labeled with last year's '2025' or older)
+                    if '2025' in combined_text or '2024' in combined_text or '2023' in combined_text:
+                        continue
+
                     past_results_table = tbl
                     break
                     
