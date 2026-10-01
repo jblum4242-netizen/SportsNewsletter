@@ -5,7 +5,6 @@ import io
 def fetch_official_nhl_stats():
     """Fetches official team stats directly from the NHL web API."""
     stats_dict = {}
-    # Bypassing the wrapper to hit the official NHL endpoint directly
     url = "https://api-web.nhle.com/v1/standings/now"
     
     try:
@@ -13,12 +12,10 @@ def fetch_official_nhl_stats():
         if res.status_code == 200:
             standings = res.json().get('standings', [])
             for team in standings:
-                # The NHL API provides team names like "Flyers" in teamName.default
                 team_name = team.get('teamName', {}).get('default', '').lower()
                 if not team_name:
                     continue
                     
-                # Build the Regulation Record string
                 reg_wins = team.get('regulationWins', 0)
                 losses = team.get('losses', 0)
                 ot_losses = team.get('otLosses', 0)
@@ -35,7 +32,7 @@ def fetch_official_nhl_stats():
         return {}
 
 def fetch_moneypuck_stats():
-    """Fetches live 5v5 advanced stats from MoneyPuck using a masked User-Agent."""
+    """Fetches live 5v5 advanced stats from MoneyPuck safely."""
     url = "https://moneypuck.com/moneypuck/playerData/seasonSummary/2026/regular/teams.csv"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
     
@@ -47,21 +44,52 @@ def fetch_moneypuck_stats():
             
             df_5v5['team'] = df_5v5['team'].str.upper()
             
-            # Grab the pre-calculated percentages and format them for display
-            df_5v5['CF%'] = (df_5v5['corsiPercentage'] * 100).round(1)
-            df_5v5['xGF%'] = (df_5v5['xGoalsPercentage'] * 100).round(1)
+            # Base percentages
+            if 'corsiPercentage' in df_5v5.columns:
+                df_5v5['CF%'] = (df_5v5['corsiPercentage'] * 100).round(1)
+            else:
+                df_5v5['CF%'] = '-'
+                
+            if 'xGoalsPercentage' in df_5v5.columns:
+                df_5v5['xGF%'] = (df_5v5['xGoalsPercentage'] * 100).round(1)
+            else:
+                df_5v5['xGF%'] = '-'
             
-            # Add the new Advanced Metrics
-            df_5v5['PDO'] = (df_5v5['pdo'] * 100).round(1)
-            df_5v5['Save%_Above_x'] = (df_5v5['savePctAboveExpected'] * 100).round(2)
-            df_5v5['HD_xGF%'] = (df_5v5['highDangerxGoalsPercentage'] * 100).round(1)
-            df_5v5['SF/60'] = ((df_5v5['shotsOnGoalFor'] / df_5v5['icetime']) * 60).round(1)
-            df_5v5['SA/60'] = ((df_5v5['shotsOnGoalAgainst'] / df_5v5['icetime']) * 60).round(1)
+            # 1. High Danger xGF% (Fallback to manual calculation if pct column is missing)
+            if 'highDangerxGoalsPercentage' in df_5v5.columns:
+                df_5v5['HD_xGF%'] = (df_5v5['highDangerxGoalsPercentage'] * 100).round(1)
+            elif 'highDangerxGoalsFor' in df_5v5.columns and 'highDangerxGoalsAgainst' in df_5v5.columns:
+                hd_total = df_5v5['highDangerxGoalsFor'] + df_5v5['highDangerxGoalsAgainst']
+                df_5v5['HD_xGF%'] = (df_5v5['highDangerxGoalsFor'] / hd_total.replace(0, pd.NA) * 100).round(1).fillna('-')
+            else:
+                df_5v5['HD_xGF%'] = '-'
+
+            # 2. Shots For & Against Per 60 (iceTime is in seconds, so multiply by 3600 for per-60 rates)
+            if 'shotsOnGoalFor' in df_5v5.columns and 'iceTime' in df_5v5.columns:
+                df_5v5['SF/60'] = ((df_5v5['shotsOnGoalFor'] / df_5v5['iceTime'].replace(0, pd.NA)) * 3600).round(1).fillna('-')
+                df_5v5['SA/60'] = ((df_5v5['shotsOnGoalAgainst'] / df_5v5['iceTime'].replace(0, pd.NA)) * 3600).round(1).fillna('-')
+            else:
+                df_5v5['SF/60'] = '-'
+                df_5v5['SA/60'] = '-'
+
+            # 3. Calculate PDO Manually (Shooting % + Save %)
+            if all(col in df_5v5.columns for col in ['goalsFor', 'shotsOnGoalFor', 'goalsAgainst', 'shotsOnGoalAgainst']):
+                shooting_pct = df_5v5['goalsFor'] / df_5v5['shotsOnGoalFor'].replace(0, pd.NA)
+                save_pct = 1 - (df_5v5['goalsAgainst'] / df_5v5['shotsOnGoalAgainst'].replace(0, pd.NA))
+                df_5v5['PDO'] = ((shooting_pct + save_pct) * 100).round(1).fillna('-')
+            else:
+                df_5v5['PDO'] = '-'
+
+            # 4. Save % Above Expected (Often isolated to goalies.csv)
+            if 'savePctAboveExpected' in df_5v5.columns:
+                df_5v5['Save%_Above_x'] = (df_5v5['savePctAboveExpected'] * 100).round(2)
+            else:
+                df_5v5['Save%_Above_x'] = '-'
             
             return df_5v5.set_index('team').to_dict(orient='index')
         return {}
     except Exception as e:
-        print(f"⚠️ MoneyPuck Stats Error: {e}")
+        print(f"⚠️️ MoneyPuck Stats Error: {e}")
         return {}
 
 def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
@@ -69,14 +97,12 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     if not official_stats:
         return ""
         
-    # 1. Match Official Stats (using mascot)
     away_mascot = away_team.lower().split()[-1]
     home_mascot = home_team.lower().split()[-1]
     
     a_off = next((v for k, v in official_stats.items() if away_mascot in k), {})
     h_off = next((v for k, v in official_stats.items() if home_mascot in k), {})
 
-    # 2. Match MoneyPuck Stats (Requires 3-letter abbreviations)
     mp_map = {
         "anaheim ducks": "ANA", "boston bruins": "BOS", "buffalo sabres": "BUF", "calgary flames": "CGY",
         "carolina hurricanes": "CAR", "chicago blackhawks": "CHI", "colorado avalanche": "COL", 
@@ -92,7 +118,6 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     a_mp = mp_stats.get(mp_map.get(away_team.lower(), ""), {})
     h_mp = mp_stats.get(mp_map.get(home_team.lower(), ""), {})
 
-    # 3. Build the HTML Table
     html = f"<table style='width: 100%; font-size: 11px; text-align: right; border-collapse: collapse; margin-bottom: 12px;'>"
     html += f"<tr style='background-color: #1e293b; color: white;'>"
     html += f"<th style='padding: 6px; text-align: left;'>{away_team}</th>"
@@ -107,9 +132,9 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
             h_float = float(str(h_val).replace('%', ''))
             if a_float != h_float:
                 if (a_float > h_float and higher_is_better) or (a_float < h_float and not higher_is_better):
-                    a_color = "#38a169" # Green
+                    a_color = "#38a169"
                 else:
-                    h_color = "#38a169" # Green
+                    h_color = "#38a169"
         except: pass
 
         disp_a = f"{a_val}%" if is_pct and a_val != '-' else str(a_val)
@@ -121,7 +146,6 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
                 f"<td style='padding: 5px; text-align: right; color: {h_color}; font-weight: bold;'>{disp_h}</td>"
                 f"</tr>")
 
-    # Inject Data Rows
     html += row("Regulation Record (API)", a_off.get('reg_record', '-'), h_off.get('reg_record', '-'), True)
     html += row("Goal Differential (API)", a_off.get('goal_diff', '-'), h_off.get('goal_diff', '-'), True)
     html += row("Power Play (API)", a_off.get('pp_pct', '-'), h_off.get('pp_pct', '-'), True, True)
@@ -144,7 +168,6 @@ if __name__ == "__main__":
     nhl_data = fetch_official_nhl_stats()
     print(f"Found official stats for {len(nhl_data)} teams.")
     if nhl_data:
-        # Grab a sample team (e.g., flyers) if it exists, otherwise grab the first one
         sample_team = "flyers" if "flyers" in nhl_data else next(iter(nhl_data.keys()))
         print(f"Sample Official ({sample_team}): {json.dumps(nhl_data[sample_team], indent=2)}")
 
@@ -153,7 +176,7 @@ if __name__ == "__main__":
     print(f"Found MoneyPuck stats for {len(mp_data)} teams.")
     if mp_data:
         sample_mp = "PHI" if "PHI" in mp_data else next(iter(mp_data.keys()))
-        print(f"Sample MoneyPuck ({sample_mp}): HD_xGF% {mp_data[sample_mp].get('HD_xGF%')} | PDO {mp_data[sample_mp].get('PDO')}")
+        print(f"Sample MoneyPuck ({sample_mp}): HD_xGF% {mp_data.get(sample_mp, {}).get('HD_xGF%')} | PDO {mp_data.get(sample_mp, {}).get('PDO')}")
 
     print("\n🧱 Testing HTML Builder...")
     html_out = build_nhl_matchup_html("Philadelphia Flyers", "New York Rangers", nhl_data, mp_data)
