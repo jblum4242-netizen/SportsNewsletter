@@ -4,14 +4,18 @@ import requests
 import io
 
 def fetch_official_nhl_stats():
-    """Fetches official team stats directly from the NHL web API."""
+    """Fetches official team stats directly from the NHL APIs (Standings + Special Teams)."""
     stats_dict = {}
-    url = "https://api-web.nhle.com/v1/standings/now"
+    
+    # Endpoints
+    standings_url = "https://api-web.nhle.com/v1/standings/now"
+    stats_url = "https://api.nhle.com/stats/rest/en/team/summary?cayenneExp=seasonId=20262027%20and%20gameTypeId=2"
     
     try:
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            standings = res.json().get('standings', [])
+        # 1. Get Standings Data (Record and Goal Differential)
+        res_standings = requests.get(standings_url, timeout=10)
+        if res_standings.status_code == 200:
+            standings = res_standings.json().get('standings', [])
             for team in standings:
                 team_name = team.get('teamName', {}).get('default', '').lower()
                 if not team_name:
@@ -23,10 +27,23 @@ def fetch_official_nhl_stats():
                     
                 stats_dict[team_name] = {
                     'goal_diff': team.get('goalDifferential', 0),
-                    'pp_pct': team.get('powerPlayPctg', 0.0),
-                    'pk_pct': team.get('penaltyKillPctg', 0.0),
-                    'reg_record': f"{reg_wins}-{losses}-{ot_losses}"
+                    'reg_record': f"{reg_wins}-{losses}-{ot_losses}",
+                    'pp_pct': 0.0, # Default until stats API populates
+                    'pk_pct': 0.0  # Default until stats API populates
                 }
+
+        # 2. Get Special Teams Data from the Stats API
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
+        res_stats = requests.get(stats_url, headers=headers, timeout=10)
+        if res_stats.status_code == 200:
+            stats_data = res_stats.json().get('data', [])
+            for team in stats_data:
+                team_name = team.get('teamFullName', '').lower()
+                if team_name in stats_dict:
+                    # The NHL API returns these as decimals (e.g. 0.250 for 25%), multiply by 100
+                    stats_dict[team_name]['pp_pct'] = round(team.get('powerPlayPct', 0.0) * 100, 1)
+                    stats_dict[team_name]['pk_pct'] = round(team.get('penaltyKillPct', 0.0) * 100, 1)
+
         return stats_dict
     except Exception as e:
         print(f"⚠️ NHL API Error: {e}")
