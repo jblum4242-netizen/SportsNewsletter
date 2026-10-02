@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import requests
 import io
 
@@ -41,55 +42,69 @@ def fetch_moneypuck_stats():
         if res.status_code == 200:
             df = pd.read_csv(io.StringIO(res.text))
             df_5v5 = df[df['situation'] == '5on5'].copy()
-            
-            df_5v5['team'] = df_5v5['team'].str.upper()
+            df_5v5['team'] = df_5v5['team'].astype(str).str.upper()
             
             # Base percentages
             if 'corsiPercentage' in df_5v5.columns:
-                df_5v5['CF%'] = (df_5v5['corsiPercentage'] * 100).round(1)
+                df_5v5['CF%'] = (pd.to_numeric(df_5v5['corsiPercentage'], errors='coerce') * 100).round(1)
             else:
                 df_5v5['CF%'] = '-'
                 
             if 'xGoalsPercentage' in df_5v5.columns:
-                df_5v5['xGF%'] = (df_5v5['xGoalsPercentage'] * 100).round(1)
+                df_5v5['xGF%'] = (pd.to_numeric(df_5v5['xGoalsPercentage'], errors='coerce') * 100).round(1)
             else:
                 df_5v5['xGF%'] = '-'
             
-            # 1. High Danger xGF% (Fallback to manual calculation if pct column is missing)
+            # 1. High Danger xGF%
             if 'highDangerxGoalsPercentage' in df_5v5.columns:
-                df_5v5['HD_xGF%'] = (df_5v5['highDangerxGoalsPercentage'] * 100).round(1)
+                df_5v5['HD_xGF%'] = (pd.to_numeric(df_5v5['highDangerxGoalsPercentage'], errors='coerce') * 100).round(1)
             elif 'highDangerxGoalsFor' in df_5v5.columns and 'highDangerxGoalsAgainst' in df_5v5.columns:
-                hd_total = df_5v5['highDangerxGoalsFor'] + df_5v5['highDangerxGoalsAgainst']
-                df_5v5['HD_xGF%'] = (df_5v5['highDangerxGoalsFor'] / hd_total.replace(0, pd.NA) * 100).round(1).fillna('-')
+                hd_for = pd.to_numeric(df_5v5['highDangerxGoalsFor'], errors='coerce')
+                hd_against = pd.to_numeric(df_5v5['highDangerxGoalsAgainst'], errors='coerce')
+                hd_total = (hd_for + hd_against).replace(0, np.nan)
+                df_5v5['HD_xGF%'] = ((hd_for / hd_total) * 100).round(1)
             else:
                 df_5v5['HD_xGF%'] = '-'
 
-            # 2. Shots For & Against Per 60 (iceTime is in seconds, so multiply by 3600 for per-60 rates)
+            # 2. Shots For & Against Per 60 (iceTime is in seconds, so multiply by 3600)
             if 'shotsOnGoalFor' in df_5v5.columns and 'iceTime' in df_5v5.columns:
-                df_5v5['SF/60'] = ((df_5v5['shotsOnGoalFor'] / df_5v5['iceTime'].replace(0, pd.NA)) * 3600).round(1).fillna('-')
-                df_5v5['SA/60'] = ((df_5v5['shotsOnGoalAgainst'] / df_5v5['iceTime'].replace(0, pd.NA)) * 3600).round(1).fillna('-')
+                sog_for = pd.to_numeric(df_5v5['shotsOnGoalFor'], errors='coerce')
+                sog_against = pd.to_numeric(df_5v5['shotsOnGoalAgainst'], errors='coerce')
+                icetime = pd.to_numeric(df_5v5['iceTime'], errors='coerce').replace(0, np.nan)
+                
+                df_5v5['SF/60'] = ((sog_for / icetime) * 3600).round(1)
+                df_5v5['SA/60'] = ((sog_against / icetime) * 3600).round(1)
             else:
                 df_5v5['SF/60'] = '-'
                 df_5v5['SA/60'] = '-'
 
             # 3. Calculate PDO Manually (Shooting % + Save %)
-            if all(col in df_5v5.columns for col in ['goalsFor', 'shotsOnGoalFor', 'goalsAgainst', 'shotsOnGoalAgainst']):
-                shooting_pct = df_5v5['goalsFor'] / df_5v5['shotsOnGoalFor'].replace(0, pd.NA)
-                save_pct = 1 - (df_5v5['goalsAgainst'] / df_5v5['shotsOnGoalAgainst'].replace(0, pd.NA))
-                df_5v5['PDO'] = ((shooting_pct + save_pct) * 100).round(1).fillna('-')
+            needed_cols = ['goalsFor', 'shotsOnGoalFor', 'goalsAgainst', 'shotsOnGoalAgainst']
+            if all(col in df_5v5.columns for col in needed_cols):
+                gf = pd.to_numeric(df_5v5['goalsFor'], errors='coerce')
+                sf = pd.to_numeric(df_5v5['shotsOnGoalFor'], errors='coerce').replace(0, np.nan)
+                ga = pd.to_numeric(df_5v5['goalsAgainst'], errors='coerce')
+                sa = pd.to_numeric(df_5v5['shotsOnGoalAgainst'], errors='coerce').replace(0, np.nan)
+                
+                sh_pct = gf / sf
+                sv_pct = 1 - (ga / sa)
+                df_5v5['PDO'] = ((sh_pct + sv_pct) * 100).round(1)
             else:
                 df_5v5['PDO'] = '-'
 
-            # 4. Save % Above Expected (Often isolated to goalies.csv)
+            # 4. Save % Above Expected
             if 'savePctAboveExpected' in df_5v5.columns:
-                df_5v5['Save%_Above_x'] = (df_5v5['savePctAboveExpected'] * 100).round(2)
+                df_5v5['Save%_Above_x'] = (pd.to_numeric(df_5v5['savePctAboveExpected'], errors='coerce') * 100).round(2)
             else:
                 df_5v5['Save%_Above_x'] = '-'
+            
+            # Fill any leftover NaN/nulls with '-' for clean UI rendering
+            df_5v5 = df_5v5.fillna('-')
             
             return df_5v5.set_index('team').to_dict(orient='index')
         return {}
     except Exception as e:
-        print(f"⚠️️ MoneyPuck Stats Error: {e}")
+        print(f"⚠️ MoneyPuck Stats Error: {e}")
         return {}
 
 def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
@@ -107,21 +122,21 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
         "anaheim ducks": "ANA", "boston bruins": "BOS", "buffalo sabres": "BUF", "calgary flames": "CGY",
         "carolina hurricanes": "CAR", "chicago blackhawks": "CHI", "colorado avalanche": "COL", 
         "columbus blue jackets": "CBJ", "dallas stars": "DAL", "detroit red wings": "DET", "edmonton oilers": "EDM",
-        "florida panthers": "FLA", "los angeles kings": "LAK", "minnesota wild": "MIN", "montreal canadiens": "MTL",
-        "nashville predators": "NSH", "new jersey devils": "NJD", "new york islanders": "NYI", "new york rangers": "NYR",
-        "ottawa senators": "OTT", "philadelphia flyers": "PHI", "pittsburgh penguins": "PIT", "san jose sharks": "SJS",
-        "seattle kraken": "SEA", "st. louis blues": "STL", "tampa bay lightning": "TBL", "toronto maple leafs": "TOR",
+        "florida panthers": "FLA", "los angeles kings": "L.A", "minnesota wild": "MIN", "montreal canadiens": "MTL",
+        "nashville predators": "NSH", "new jersey devils": "N.J", "new york islanders": "NYI", "new york rangers": "NYR",
+        "ottawa senators": "OTT", "philadelphia flyers": "PHI", "pittsburgh penguins": "PIT", "san jose sharks": "S.J",
+        "seattle kraken": "SEA", "st. louis blues": "STL", "tampa bay lightning": "T.B", "toronto maple leafs": "TOR",
         "utah hockey club": "UTA", "vancouver canucks": "VAN", "vegas golden knights": "VGK", "washington capitals": "WSH",
         "winnipeg jets": "WPG"
     }
     
-    a_mp = mp_stats.get(mp_map.get(away_team.lower(), ""), {})
-    h_mp = mp_stats.get(mp_map.get(home_team.lower(), ""), {})
+    a_mp = mp_stats.get(mp_map.get(away_team.lower().strip(), ""), {})
+    h_mp = mp_stats.get(mp_map.get(home_team.lower().strip(), ""), {})
 
-    html = f"<table style='width: 100%; font-size: 11px; text-align: right; border-collapse: collapse; margin-bottom: 12px;'>"
-    html += f"<tr style='background-color: #1e293b; color: white;'>"
+    html = "<table style='width: 100%; font-size: 11px; text-align: right; border-collapse: collapse; margin-bottom: 12px;'>"
+    html += "<tr style='background-color: #1e293b; color: white;'>"
     html += f"<th style='padding: 6px; text-align: left;'>{away_team}</th>"
-    html += f"<th style='padding: 6px; text-align: center;'>Combined Metrics</th>"
+    html += "<th style='padding: 6px; text-align: center;'>Combined Metrics</th>"
     html += f"<th style='padding: 6px; text-align: right;'>{home_team}</th></tr>"
 
     def row(cat_name, a_val, h_val, higher_is_better=True, is_pct=False):
@@ -135,7 +150,8 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
                     a_color = "#38a169"
                 else:
                     h_color = "#38a169"
-        except: pass
+        except:
+            pass
 
         disp_a = f"{a_val}%" if is_pct and a_val != '-' else str(a_val)
         disp_h = f"{h_val}%" if is_pct and h_val != '-' else str(h_val)
