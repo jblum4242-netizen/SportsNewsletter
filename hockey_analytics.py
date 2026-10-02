@@ -66,7 +66,7 @@ def fetch_moneypuck_stats():
             else:
                 df_5v5['HD_xGF%'] = '-'
 
-            # 2. Shots For & Against Per 60 (iceTime is in seconds, so multiply by 3600)
+            # 2. Shots For & Against Per 60
             if 'shotsOnGoalFor' in df_5v5.columns and 'iceTime' in df_5v5.columns:
                 sog_for = pd.to_numeric(df_5v5['shotsOnGoalFor'], errors='coerce')
                 sog_against = pd.to_numeric(df_5v5['shotsOnGoalAgainst'], errors='coerce')
@@ -78,7 +78,7 @@ def fetch_moneypuck_stats():
                 df_5v5['SF/60'] = '-'
                 df_5v5['SA/60'] = '-'
 
-            # 3. Calculate PDO Manually (Shooting % + Save %)
+            # 3. Calculate PDO Manually
             needed_cols = ['goalsFor', 'shotsOnGoalFor', 'goalsAgainst', 'shotsOnGoalAgainst']
             if all(col in df_5v5.columns for col in needed_cols):
                 gf = pd.to_numeric(df_5v5['goalsFor'], errors='coerce')
@@ -92,13 +92,17 @@ def fetch_moneypuck_stats():
             else:
                 df_5v5['PDO'] = '-'
 
-            # 4. Save % Above Expected
-            if 'savePctAboveExpected' in df_5v5.columns:
-                df_5v5['Save%_Above_x'] = (pd.to_numeric(df_5v5['savePctAboveExpected'], errors='coerce') * 100).round(2)
+            # 4. Calculate Save % Above Expected Manually
+            needed_sv_cols = ['xGoalsAgainst', 'goalsAgainst', 'shotsOnGoalAgainst']
+            if all(col in df_5v5.columns for col in needed_sv_cols):
+                xga = pd.to_numeric(df_5v5['xGoalsAgainst'], errors='coerce')
+                ga = pd.to_numeric(df_5v5['goalsAgainst'], errors='coerce')
+                sa = pd.to_numeric(df_5v5['shotsOnGoalAgainst'], errors='coerce').replace(0, np.nan)
+                
+                df_5v5['Save%_Above_x'] = (((xga - ga) / sa) * 100).round(2)
             else:
                 df_5v5['Save%_Above_x'] = '-'
             
-            # Fill any leftover NaN/nulls with '-' for clean UI rendering
             df_5v5 = df_5v5.fillna('-')
             
             return df_5v5.set_index('team').to_dict(orient='index')
