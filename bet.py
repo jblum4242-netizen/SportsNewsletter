@@ -1102,10 +1102,17 @@ def format_consensus(consensus_str):
 # ---------------------------------------------------------
 # HELPER: RENDER CALENDAR SECTION
 # ---------------------------------------------------------
-def render_calendar_table(games_list, show_league_badge=True):
+def render_calendar_table(games_list, show_league_badge=True, global_stats=None):
     if not games_list:
         return "<div style='color: #a0aec0; font-size: 12px; padding: 10px 0;'>No games scheduled.</div>"
     
+    # Safety net: Try to grab the global dictionary if one wasn't explicitly passed
+    if global_stats is None:
+        try:
+            global_stats = football_stats
+        except NameError:
+            global_stats = {}
+
     games_list.sort(key=lambda x: x['game_datetime'])
     chtml = "<table style='width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 5px;'>"
     
@@ -1124,16 +1131,14 @@ def render_calendar_table(games_list, show_league_badge=True):
             try:
                 away_raw, home_raw = matchup_text.split(' vs. ')
                 
-                # Helper function to find team rank from football_stats['NFL']
+                # Helper function using the explicitly passed global_stats
                 def get_rank_badge(team_str):
                     t_lower = team_str.lower()
-                    nfl_data = football_stats.get("NFL", {})
+                    nfl_data = global_stats.get("NFL", {})
                     
                     for key, metrics in nfl_data.items():
-                        # Match either the full name/mascot key or substring
                         if key in t_lower or t_lower in key or key[:3] in t_lower:
                             rk = metrics.get("net_epa_rank")
-                            # Accept any valid rank string (even if it's currently a placeholder or number)
                             if rk and str(rk) != "99":
                                 return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>"
                     return ""
@@ -1142,8 +1147,9 @@ def render_calendar_table(games_list, show_league_badge=True):
                 home_badge = get_rank_badge(home_raw)
                 
                 matchup_text = f"{away_raw}{away_badge} vs. {home_raw}{home_badge}"
-            except Exception:
-                pass # Fall back to standard matchup text if parsing fails
+            except Exception as e:
+                # 🚨 NO MORE SILENT FAILURES
+                print(f"⚠️ Error formatting NFL ranks in schedule: {e}")
 
         # Matchup text with live score handling
         if g['real_status'] in ['completed', 'in_progress'] and g['live_feed']:
@@ -1638,7 +1644,8 @@ def build_sports_briefings():
         else:
             boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
             
-        boards_html += render_calendar_table(league_schedule_games, show_league_badge=False)
+        # 🚨 THIS IS THE UPDATED CALLER BLOCK 
+        boards_html += render_calendar_table(league_schedule_games, show_league_badge=False, global_stats=football_stats)
         boards_html += "</div>"
         
         # 2. Detailed Matchup Analysis Blocks
