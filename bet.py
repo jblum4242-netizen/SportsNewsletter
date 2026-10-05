@@ -1118,11 +1118,35 @@ def render_calendar_table(games_list, show_league_badge=True):
         # Modern TV Badge
         tv_station = f" <span style='background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;'>📺 {g['network']}</span>" if g['network'] else ""
         
+        # --- NFL NET EPA RANK INJECTION ---
+        matchup_text = g['matchup']
+        if g['league'].upper() == "NFL" and ' vs. ' in matchup_text:
+            try:
+                away_raw, home_raw = matchup_text.split(' vs. ')
+                
+                # Helper function to find team rank from football_stats['NFL']
+                def get_rank_badge(team_str):
+                    t_clean = team_str.lower()
+                    nfl_data = football_stats.get("NFL", {})
+                    for mascot, metrics in nfl_data.items():
+                        if mascot in t_clean or mascot[:3] in t_clean:
+                            rk = metrics.get("net_epa_rank")
+                            if rk and rk != "99":
+                                return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>"
+                    return ""
+
+                away_badge = get_rank_badge(away_raw)
+                home_badge = get_rank_badge(home_raw)
+                
+                matchup_text = f"{away_raw}{away_badge} vs. {home_raw}{home_badge}"
+            except Exception:
+                pass # Fall back to standard matchup text if parsing fails
+
         # Matchup text with live score handling
         if g['real_status'] in ['completed', 'in_progress'] and g['live_feed']:
             matchup_display = f"<span style='color: #dc2626; font-weight: bold;'>{g['live_feed']}</span>"
         else:
-            matchup_display = f"{g['matchup']}{tv_station}"
+            matchup_display = f"{matchup_text}{tv_station}"
             
         league_badge = f"<td style='padding: 8px 10px; color: #2563eb; font-weight: 700; width: 12%;'>[{g['league']}]</td>" if show_league_badge else ""
         
@@ -1596,7 +1620,21 @@ def build_sports_briefings():
             league_schedule_games = [g for g in all_monitored_games if g['league'].upper() == league.upper()]
             days_label = "7 Days"   
 
-        boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
+        # 1. League-Specific Schedule Table at Top (1-Day vs 7-Day filter)
+        # ... (keep the if/else logic determining league_schedule_games)
+        
+        # --- NEW: NFL gets the nfelo link, other leagues stay standard ---
+        if league.upper() == "NFL":
+            boards_html += (
+                f"<div class='card-container'>"
+                f"<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>"
+                f"  <h3 style='margin: 0; color: #1e293b; font-size: 15px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
+                f"  <a href='https://www.nfeloapp.com/nfl-power-ratings/' target='_blank' style='font-size: 12px; color: #2563eb; text-decoration: none; font-weight: 600;'>Ratings by nfelo ↗</a>"
+                f"</div>"
+            )
+        else:
+            boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
+            
         boards_html += render_calendar_table(league_schedule_games, show_league_badge=False)
         boards_html += "</div>"
         

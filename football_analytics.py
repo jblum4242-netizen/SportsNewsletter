@@ -1,4 +1,13 @@
 import datetime
+import io
+import os
+import re
+import requests
+
+# ==========================================
+# CONFIGURATION & API KEYS
+# ==========================================
+CFBD_API_KEY = "LrFNn3N2V22VOBJ3r6a+dmw4iUsD84uV5YZdSbROZQacDHu1f3h2wbciIHRQzQsy"
 
 def fetch_nfl_stats():
     """Calculates Success Rate and YPG via nflreadpy, then overwrites EPA and PPG with nfelo's opponent-adjusted HTML data."""
@@ -24,15 +33,18 @@ def fetch_nfl_stats():
         'SEA': 'seahawks', 'TB': 'buccaneers', 'TEN': 'titans', 'WAS': 'commanders'
     }
     
-    # 1. GENERATE BASE DICTIONARY WITH NFLREADPY (For Success Rate and YPG)
+    # 1. GENERATE BASE DICTIONARY WITH NFLREADPY (For Success Rate, YPG, and Fallback EPA)
     try:
         pbp = nfl.load_pbp([current_year]).to_pandas()
         pbp_valid = pbp.dropna(subset=['epa', 'play_type'])
         pbp_valid = pbp_valid[pbp_valid['play_type'].isin(['pass', 'run'])]
         
-        # We still calculate raw EPA as a fallback just in case the nfelo website goes down
+        # Raw EPA calculation
         off_total = pbp_valid.groupby('posteam')['epa'].mean()
         def_total = pbp_valid.groupby('defteam')['epa'].mean()
+        
+        # --- NEW: Fallback Net EPA (Offense minus Defense EPA allowed) ---
+        net_total = off_total.subtract(def_total, fill_value=0.0)
 
         off_ypg = pbp_valid.groupby(['posteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean()
         def_ypg = pbp_valid.groupby(['defteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean()
@@ -47,7 +59,8 @@ def fetch_nfl_stats():
             'off_ypg': off_ypg.rank(ascending=False, method='min'),
             'def_ypg': def_ypg.rank(ascending=True, method='min'),
             'off_success': off_success.rank(ascending=False, method='min'),
-            'def_success': def_success.rank(ascending=True, method='min')
+            'def_success': def_success.rank(ascending=True, method='min'),
+            'net_epa': net_total.rank(ascending=False, method='min')  # <-- NEW: Fallback Rank
         }
 
         stats_map = {}
@@ -58,6 +71,11 @@ def fetch_nfl_stats():
                     "def_ypg": f"{def_ypg.get(abbr, 0):.1f}", "def_ypg_rank": f"{int(ranks['def_ypg'].get(abbr, 99))}",
                     "off_success": f"{off_success.get(abbr, 0):.1f}%", "off_success_rank": f"{int(ranks['off_success'].get(abbr, 99))}",
                     "def_success": f"{def_success.get(abbr, 0):.1f}%", "def_success_rank": f"{int(ranks['def_success'].get(abbr, 99))}",
+                    
+                    # --- NEW: Placeholders for Net EPA ---
+                    "net_epa": f"{net_total.get(abbr, 0):.2f}",
+                    "net_epa_rank": f"{int(ranks['net_epa'].get(abbr, 99))}",
+                    
                     # Placeholders for nfelo overrides
                     "off_total": f"{off_total.get(abbr, 0):.2f}", "off_total_rank": "99",
                     "off_pass": "-", "off_pass_rank": "99",
@@ -107,6 +125,13 @@ def fetch_nfl_stats():
         ppg_for_col = [c for c in nfelo_df.columns if 'For' in c.split('_') or 'For' in c][0]
         ppg_against_col = [c for c in nfelo_df.columns if 'Against' in c.split('_') or 'Against' in c][0]
 
+        # --- NEW: Identify the Net EPA Play column (the yellow highlighted column) ---
+        net_epa_col = next((c for c in nfelo_df.columns if 'Offensive' not in c and 'Defensive' not in c and 'Play' in c and 'EPA' in c), None)
+        if not net_epa_col:
+            # Fallback calculation if column name changes
+            nfelo_df['Net_EPA_Play'] = nfelo_df[off_play_col] - nfelo_df[def_play_col]
+            net_epa_col = 'Net_EPA_Play'
+
         # Calculate ranks natively inside pandas for the nfelo metrics
         nfelo_df['off_tot_rk'] = nfelo_df[off_play_col].rank(ascending=False, method='min')
         nfelo_df['off_pass_rk'] = nfelo_df[off_pass_col].rank(ascending=False, method='min')
@@ -119,11 +144,13 @@ def fetch_nfl_stats():
         nfelo_df['off_ppg_rk'] = nfelo_df[ppg_for_col].rank(ascending=False, method='min')
         nfelo_df['def_ppg_rk'] = nfelo_df[ppg_against_col].rank(ascending=True, method='min')
 
+        # --- NEW: Rank Net EPA 1-32 descending ---
+        nfelo_df['net_epa_rk'] = nfelo_df[net_epa_col].rank(ascending=False, method='min')
+
         for idx, row in nfelo_df.iterrows():
             team_str = str(row[team_col]).lower()
             
             for mascot in stats_map.keys():
-                # Matches "eagles" inside "philadelphia eagles" or "phi"
                 if mascot in team_str or mascot[:3] in team_str:
                     stats_map[mascot].update({
                         "off_total": f"{float(row[off_play_col]):.3f}",
@@ -143,7 +170,11 @@ def fetch_nfl_stats():
                         "off_ppg": f"{float(row[ppg_for_col]):.1f}",
                         "off_ppg_rank": f"{int(row['off_ppg_rk'])}",
                         "def_ppg": f"{float(row[ppg_against_col]):.1f}",
-                        "def_ppg_rank": f"{int(row['def_ppg_rk'])}"
+                        "def_ppg_rank": f"{int(row['def_ppg_rk'])}",
+
+                        # --- NEW: Overwrite with nfelo Net EPA & Rank ---
+                        "net_epa": f"{float(row[net_epa_col]):.3f}",
+                        "net_epa_rank": f"{int(row['net_epa_rk'])}"
                     })
                     break
                     
@@ -152,18 +183,26 @@ def fetch_nfl_stats():
 
     return stats_map
 
-
 def fetch_cfb_stats():
-    """Calculates granular EPA, PPG, and YPG directly from sportsdataverse."""
+    """Calculates granular EPA, PPG, and YPG natively via sportsdataverse, then overrides with CFBD Opponent-Adjusted WEPA."""
     try:
         import sportsdataverse as sdv
+        import pandas as pd
+        import requests
+        import datetime
+        import os
     except ImportError:
-        print("⚠️ sportsdataverse not installed. Run 'pip install sportsdataverse pandas'.")
+        print("⚠️ Required libraries not installed.")
         return {}
         
-    print("📊 Calculating CFB advanced and traditional metrics via sportsdataverse...")
+    print("📊 Calculating CFB traditional metrics via sportsdataverse...")
     current_year = datetime.datetime.now().year
     
+    # Reads global CFBD_API_KEY from top of script, or falls back to environment variable
+    api_key = globals().get("CFBD_API_KEY")
+    if not api_key or api_key == "YOUR_ACTUAL_API_KEY_HERE":
+        api_key = os.environ.get("CFBD_API_KEY")
+
     try:
         pbp = sdv.cfb.load_cfb_pbp(seasons=[current_year], return_as_pandas=True)
         sched = sdv.cfb.load_cfb_schedule(seasons=[current_year], return_as_pandas=True)
@@ -177,15 +216,14 @@ def fetch_cfb_stats():
         if play_type_col not in pbp.columns:
             play_type_col = [c for c in pbp.columns if 'type' in c.lower()][0]
 
-        # Dynamically hunt for the yards column
         yards_col = 'yards_gained'
         for col in ['yards_gained', 'statYardage', 'yards', 'yds', 'net_yards', 'yds_gained']:
             if col in pbp.columns:
                 yards_col = col
                 break
 
-        # --- EPA & YARDS CALCULATION ---
-        pbp_valid = pbp.dropna(subset=[epa_col, play_type_col])
+        # --- NATIVE EPA, YARDS & SUCCESS RATE CALCULATION (Safety Fallback) ---
+        pbp_valid = pbp.dropna(subset=[epa_col, play_type_col]).copy()
         pbp_valid['is_pass'] = pbp_valid[play_type_col].astype(str).str.contains('Pass|Sack', case=False, na=False)
         pbp_valid['is_rush'] = pbp_valid[play_type_col].astype(str).str.contains('Rush', case=False, na=False)
         pbp_valid = pbp_valid[pbp_valid['is_pass'] | pbp_valid['is_rush']]
@@ -201,48 +239,51 @@ def fetch_cfb_stats():
         off_ypg = pbp_valid.groupby([pos_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
         def_ypg = pbp_valid.groupby([def_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
 
-        # --- SUCCESS RATE CALCULATION ---
         if 'success' not in pbp_valid.columns:
             pbp_valid['success'] = (pbp_valid[epa_col] > 0).astype(int)
             
         off_success = (pbp_valid.groupby(pos_team_col)['success'].mean() * 100).round(1)
         def_success = (pbp_valid.groupby(def_team_col)['success'].mean() * 100).round(1)
 
-        # --- PPG CALCULATION ---
-        home_pts_col = 'home_points'
-        for col in ['home_points', 'home_score', 'homeScore']:
-            if col in sched.columns: home_pts_col = col; break
-        away_pts_col = 'away_points'
-        for col in ['away_points', 'away_score', 'awayScore']:
-            if col in sched.columns: away_pts_col = col; break
-            
-        home_team_col = 'home_team'
-        for col in ['home_team', 'homeTeam', 'home_team_name']:
-            if col in sched.columns: home_team_col = col; break
-        away_team_col = 'away_team'
-        for col in ['away_team', 'awayTeam', 'away_team_name']:
-            if col in sched.columns: away_team_col = col; break
+        # --- PPG CALCULATION (STRICTLY FBS vs FBS GAMES) ---
+        home_pts_col = next((c for c in ['home_points', 'home_score', 'homeScore'] if c in sched.columns), 'home_points')
+        away_pts_col = next((c for c in ['away_points', 'away_score', 'awayScore'] if c in sched.columns), 'away_points')
+        home_team_col = next((c for c in ['home_team', 'homeTeam', 'home_team_name'] if c in sched.columns), 'home_team')
+        away_team_col = next((c for c in ['away_team', 'awayTeam', 'away_team_name'] if c in sched.columns), 'away_team')
 
-        sched_played = sched.dropna(subset=[home_pts_col, away_pts_col])
+        home_class_col = next((c for c in sched.columns if c.lower() in ['home_classification', 'home_team_classification', 'home_division']), None)
+        away_class_col = next((c for c in sched.columns if c.lower() in ['away_classification', 'away_team_classification', 'away_division']), None)
+
+        sched_played = sched.dropna(subset=[home_pts_col, away_pts_col]).copy()
         
-        home_pts = sched_played.groupby(home_team_col)[home_pts_col].sum()
-        away_pts = sched_played.groupby(away_team_col)[away_pts_col].sum()
-        home_gp = sched_played.groupby(home_team_col)['game_id'].count()
-        away_gp = sched_played.groupby(away_team_col)['game_id'].count()
+        if home_class_col and away_class_col:
+            sched_played['home_is_fbs'] = sched_played[home_class_col].astype(str).str.lower().str.contains('fbs', na=True)
+            sched_played['away_is_fbs'] = sched_played[away_class_col].astype(str).str.lower().str.contains('fbs', na=True)
+        else:
+            sched_played['home_is_fbs'] = True
+            sched_played['away_is_fbs'] = True
+
+        sched_fbs = sched_played[sched_played['home_is_fbs'] & sched_played['away_is_fbs']].copy()
+        
+        home_pts = sched_fbs.groupby(home_team_col)[home_pts_col].sum()
+        home_gp = sched_fbs.groupby(home_team_col)['game_id'].count()
+        
+        away_pts = sched_fbs.groupby(away_team_col)[away_pts_col].sum()
+        away_gp = sched_fbs.groupby(away_team_col)['game_id'].count()
         
         tot_pts = home_pts.add(away_pts, fill_value=0)
         tot_gp = home_gp.add(away_gp, fill_value=0)
-        tot_allowed = sched_played.groupby(home_team_col)[away_pts_col].sum().add(sched_played.groupby(away_team_col)[home_pts_col].sum(), fill_value=0)
         
-        sched_off_ppg = (tot_pts / tot_gp.replace(0, 1)).round(1)
-        sched_def_ppg = (tot_allowed / tot_gp.replace(0, 1)).round(1)
+        tot_allowed_home = sched_fbs.groupby(home_team_col)[away_pts_col].sum()
+        tot_allowed_away = sched_fbs.groupby(away_team_col)[home_pts_col].sum()
         
-        off_ppg_dict = sched_off_ppg.to_dict()
-        def_ppg_dict = sched_def_ppg.to_dict()
-        off_ppg_rank_dict = sched_off_ppg.rank(ascending=False, method='min').to_dict()
-        def_ppg_rank_dict = sched_def_ppg.rank(ascending=True, method='min').to_dict()
+        tot_allowed = tot_allowed_home.add(tot_allowed_away, fill_value=0)
+        
+        valid_teams = tot_gp[tot_gp > 0].index
+        off_ppg = (tot_pts[valid_teams] / tot_gp[valid_teams]).round(1)
+        def_ppg = (tot_allowed[valid_teams] / tot_gp[valid_teams]).round(1)
 
-        # --- RANKINGS ---
+        # --- NATIVE RANKINGS ---
         ranks = {
             'off_total': off_total.rank(ascending=False, method='min'),
             'off_pass': off_pass.rank(ascending=False, method='min'),
@@ -252,49 +293,112 @@ def fetch_cfb_stats():
             'def_rush': def_rush.rank(ascending=True, method='min'),
             'off_ypg': off_ypg.rank(ascending=False, method='min'),
             'def_ypg': def_ypg.rank(ascending=True, method='min'),
+            'off_ppg': off_ppg.rank(ascending=False, method='min'),
+            'def_ppg': def_ppg.rank(ascending=True, method='min'),
             'off_success': off_success.rank(ascending=False, method='min'),
             'def_success': def_success.rank(ascending=True, method='min')
         }
 
+        # Build initial map with native stats
         stats_map = {}
-        for team_name in off_total.index:
+        for team_name in off_ypg.index:
             clean_name = str(team_name).lower().replace("state", "st")
+            t_off_ppg, t_def_ppg = off_ppg.get(team_name, 0.0), def_ppg.get(team_name, 0.0)
+            t_off_ppg_rk, t_def_ppg_rk = ranks['off_ppg'].get(team_name, 999), ranks['def_ppg'].get(team_name, 999)
             
-            t_off_ppg, t_def_ppg, t_off_ppg_rk, t_def_ppg_rk = 0.0, 0.0, 999, 999
-            
-            if team_name in off_ppg_dict:
-                t_off_ppg = off_ppg_dict[team_name]
-                t_def_ppg = def_ppg_dict.get(team_name, 0.0)
-                t_off_ppg_rk = off_ppg_rank_dict.get(team_name, 999)
-                t_def_ppg_rk = def_ppg_rank_dict.get(team_name, 999)
-            else:
-                for st, val in off_ppg_dict.items():
+            if team_name not in off_ppg:
+                for st, val in off_ppg.items():
                     if str(team_name).lower() in str(st).lower() or str(st).lower() in str(team_name).lower():
                         t_off_ppg = val
-                        t_def_ppg = def_ppg_dict.get(st, 0.0)
-                        t_off_ppg_rk = off_ppg_rank_dict.get(st, 999)
-                        t_def_ppg_rk = def_ppg_rank_dict.get(st, 999)
+                        t_def_ppg = def_ppg.get(st, 0.0)
+                        t_off_ppg_rk = ranks['off_ppg'].get(st, 999)
+                        t_def_ppg_rk = ranks['def_ppg'].get(st, 999)
                         break
 
             stats_map[clean_name] = {
+                "off_ypg": f"{off_ypg.get(team_name, 0):.1f}", "off_ypg_rank": f"{int(ranks['off_ypg'].get(team_name, 999))}",
+                "def_ypg": f"{def_ypg.get(team_name, 0):.1f}", "def_ypg_rank": f"{int(ranks['def_ypg'].get(team_name, 999))}",
+                "off_ppg": f"{t_off_ppg:.1f}", "off_ppg_rank": f"{int(t_off_ppg_rk)}",
+                "def_ppg": f"{t_def_ppg:.1f}", "def_ppg_rank": f"{int(t_def_ppg_rk)}",
                 "off_total": f"{off_total.get(team_name, 0):.2f}", "off_total_rank": f"{int(ranks['off_total'].get(team_name, 999))}",
                 "off_pass": f"{off_pass.get(team_name, 0):.2f}", "off_pass_rank": f"{int(ranks['off_pass'].get(team_name, 999))}",
                 "off_rush": f"{off_rush.get(team_name, 0):.2f}", "off_rush_rank": f"{int(ranks['off_rush'].get(team_name, 999))}",
                 "def_total": f"{def_total.get(team_name, 0):.2f}", "def_total_rank": f"{int(ranks['def_total'].get(team_name, 999))}",
                 "def_pass": f"{def_pass.get(team_name, 0):.2f}", "def_pass_rank": f"{int(ranks['def_pass'].get(team_name, 999))}",
                 "def_rush": f"{def_rush.get(team_name, 0):.2f}", "def_rush_rank": f"{int(ranks['def_rush'].get(team_name, 999))}",
-                "off_ypg": f"{off_ypg.get(team_name, 0):.1f}", "off_ypg_rank": f"{int(ranks['off_ypg'].get(team_name, 999))}",
-                "def_ypg": f"{def_ypg.get(team_name, 0):.1f}", "def_ypg_rank": f"{int(ranks['def_ypg'].get(team_name, 999))}",
-                "off_ppg": f"{t_off_ppg:.1f}", "off_ppg_rank": f"{int(t_off_ppg_rk)}",
-                "def_ppg": f"{t_def_ppg:.1f}", "def_ppg_rank": f"{int(t_def_ppg_rk)}",
                 "off_success": f"{off_success.get(team_name, 0):.1f}%", "off_success_rank": f"{int(ranks['off_success'].get(team_name, 999))}",
-                "def_success": f"{def_success.get(team_name, 0):.1f}%", "def_success_rank": f"{int(ranks['def_success'].get(team_name, 999))}",
+                "def_success": f"{def_success.get(team_name, 0):.1f}%", "def_success_rank": f"{int(ranks['def_success'].get(team_name, 999))}"
             }
+            
+        # --- OVERWRITE WITH CFBD OPPONENT-ADJUSTED METRICS VIA API ---
+        if api_key and api_key != "YOUR_ACTUAL_API_KEY_HERE":
+            print("🧮 Fetching Opponent-Adjusted stats from CFBD API...")
+            headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+            api_url = f"https://api.collegefootballdata.com/stats/season/advanced?year={current_year}"
+            res = requests.get(api_url, headers=headers)
+            
+            if res.status_code == 200:
+                cfbd_data = res.json()
+                cfbd_df = pd.json_normalize(cfbd_data)
+                
+                off_tot = 'offense.ppa'
+                off_pass = 'offense.passingPlays.ppa'
+                off_rush = 'offense.rushingPlays.ppa'
+                off_sr = 'offense.successRate'
+                
+                def_tot = 'defense.ppa'
+                def_pass = 'defense.passingPlays.ppa'
+                def_rush = 'defense.rushingPlays.ppa'
+                def_sr = 'defense.successRate'
+                
+                cfbd_df['off_tot_rk'] = cfbd_df[off_tot].rank(ascending=False, method='min')
+                cfbd_df['off_pass_rk'] = cfbd_df[off_pass].rank(ascending=False, method='min')
+                cfbd_df['off_rush_rk'] = cfbd_df[off_rush].rank(ascending=False, method='min')
+                cfbd_df['off_sr_rk'] = cfbd_df[off_sr].rank(ascending=False, method='min')
+                
+                cfbd_df['def_tot_rk'] = cfbd_df[def_tot].rank(ascending=True, method='min')
+                cfbd_df['def_pass_rk'] = cfbd_df[def_pass].rank(ascending=True, method='min')
+                cfbd_df['def_rush_rk'] = cfbd_df[def_rush].rank(ascending=True, method='min')
+                cfbd_df['def_sr_rk'] = cfbd_df[def_sr].rank(ascending=True, method='min')
+                
+                for idx, row in cfbd_df.iterrows():
+                    team_raw = str(row.get('team', '')).lower()
+                    team_clean = team_raw.replace("state", "st")
+                    
+                    target_key = None
+                    if team_clean in stats_map:
+                        target_key = team_clean
+                    elif team_raw in stats_map:
+                        target_key = team_raw
+                    else:
+                        for k in stats_map:
+                            if k in team_clean or team_clean in k or k in team_raw or team_raw in k:
+                                target_key = k
+                                break
+                                
+                    if target_key:
+                        stats_map[target_key]["off_total"] = f"{float(row[off_tot]):.3f}"
+                        stats_map[target_key]["off_total_rank"] = f"{int(row['off_tot_rk'])}"
+                        stats_map[target_key]["off_pass"] = f"{float(row[off_pass]):.3f}"
+                        stats_map[target_key]["off_pass_rank"] = f"{int(row['off_pass_rk'])}"
+                        stats_map[target_key]["off_rush"] = f"{float(row[off_rush]):.3f}"
+                        stats_map[target_key]["off_rush_rank"] = f"{int(row['off_rush_rk'])}"
+                        stats_map[target_key]["off_success"] = f"{float(row[off_sr])*100:.1f}%"
+                        stats_map[target_key]["off_success_rank"] = f"{int(row['off_sr_rk'])}"
+                        
+                        stats_map[target_key]["def_total"] = f"{float(row[def_tot]):.3f}"
+                        stats_map[target_key]["def_total_rank"] = f"{int(row['def_tot_rk'])}"
+                        stats_map[target_key]["def_pass"] = f"{float(row[def_pass]):.3f}"
+                        stats_map[target_key]["def_pass_rank"] = f"{int(row['def_pass_rk'])}"
+                        stats_map[target_key]["def_rush"] = f"{float(row[def_rush]):.3f}"
+                        stats_map[target_key]["def_rush_rank"] = f"{int(row['def_rush_rk'])}"
+                        stats_map[target_key]["def_success"] = f"{float(row[def_sr])*100:.1f}%"
+                        stats_map[target_key]["def_success_rank"] = f"{int(row['def_sr_rk'])}"
+                        
         return stats_map
     except Exception as e:
-        print(f"⚠️ Error calculating CFB metrics natively: {e}")
+        print(f"⚠️ Error calculating CFB metrics: {e}")
         return {}
-
 
 def fetch_all_league_stats(league):
     """Router for master stat building."""
