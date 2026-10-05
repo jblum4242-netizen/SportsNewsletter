@@ -1,15 +1,16 @@
 import datetime
 
 def fetch_nfl_stats():
-    """Calculates granular EPA, PPG, and YPG directly from nflreadpy."""
+    """Calculates Success Rate and YPG via nflreadpy, then overwrites EPA and PPG with nfelo's opponent-adjusted HTML data."""
     try:
         import nflreadpy as nfl
         import pandas as pd
     except ImportError:
-        print("⚠️ nflreadpy not installed. Run 'pip install nflreadpy pandas pyarrow'.")
+        print("⚠️ nflreadpy not installed.")
         return {}
         
-    print("📊 Calculating NFL advanced and traditional metrics via nflreadpy...")
+    print("📊 Calculating NFL advanced metrics via nflreadpy...")
+    import datetime
     current_year = datetime.datetime.now().year
     
     nfl_mascot_map = {
@@ -23,84 +24,134 @@ def fetch_nfl_stats():
         'SEA': 'seahawks', 'TB': 'buccaneers', 'TEN': 'titans', 'WAS': 'commanders'
     }
     
+    # 1. GENERATE BASE DICTIONARY WITH NFLREADPY (For Success Rate and YPG)
     try:
         pbp = nfl.load_pbp([current_year]).to_pandas()
-        sched = nfl.load_schedules([current_year]).to_pandas()
-        
-        # --- EPA & YARDS CALCULATION ---
         pbp_valid = pbp.dropna(subset=['epa', 'play_type'])
         pbp_valid = pbp_valid[pbp_valid['play_type'].isin(['pass', 'run'])]
         
-        off_total = pbp_valid.groupby('posteam')['epa'].mean().round(3)
-        off_pass = pbp_valid[pbp_valid['play_type'] == 'pass'].groupby('posteam')['epa'].mean().round(3)
-        off_rush = pbp_valid[pbp_valid['play_type'] == 'run'].groupby('posteam')['epa'].mean().round(3)
-        
-        def_total = pbp_valid.groupby('defteam')['epa'].mean().round(3)
-        def_pass = pbp_valid[pbp_valid['play_type'] == 'pass'].groupby('defteam')['epa'].mean().round(3)
-        def_rush = pbp_valid[pbp_valid['play_type'] == 'run'].groupby('defteam')['epa'].mean().round(3)
+        # We still calculate raw EPA as a fallback just in case the nfelo website goes down
+        off_total = pbp_valid.groupby('posteam')['epa'].mean()
+        def_total = pbp_valid.groupby('defteam')['epa'].mean()
 
-        off_ypg = pbp_valid.groupby(['posteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean().round(1)
-        def_ypg = pbp_valid.groupby(['defteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean().round(1)
+        off_ypg = pbp_valid.groupby(['posteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean()
+        def_ypg = pbp_valid.groupby(['defteam', 'game_id'])['yards_gained'].sum().groupby(level=0).mean()
 
-        # --- SUCCESS RATE CALCULATION ---
         if 'success' not in pbp_valid.columns:
             pbp_valid['success'] = (pbp_valid['epa'] > 0).astype(int)
             
-        off_success = (pbp_valid.groupby('posteam')['success'].mean() * 100).round(1)
-        def_success = (pbp_valid.groupby('defteam')['success'].mean() * 100).round(1)
+        off_success = (pbp_valid.groupby('posteam')['success'].mean() * 100)
+        def_success = (pbp_valid.groupby('defteam')['success'].mean() * 100)
 
-        # --- PPG CALCULATION ---
-        sched_played = sched.dropna(subset=['home_score', 'away_score'])
-        
-        home_pts = sched_played.groupby('home_team')['home_score'].sum()
-        away_pts = sched_played.groupby('away_team')['away_score'].sum()
-        home_gp = sched_played.groupby('home_team')['game_id'].count()
-        away_gp = sched_played.groupby('away_team')['game_id'].count()
-        
-        tot_pts = home_pts.add(away_pts, fill_value=0)
-        tot_gp = home_gp.add(away_gp, fill_value=0)
-        tot_allowed = sched_played.groupby('home_team')['away_score'].sum().add(sched_played.groupby('away_team')['home_score'].sum(), fill_value=0)
-        
-        off_ppg = (tot_pts / tot_gp).round(1)
-        def_ppg = (tot_allowed / tot_gp).round(1)
-
-        # --- RANKINGS ---
         ranks = {
-            'off_total': off_total.rank(ascending=False, method='min'),
-            'off_pass': off_pass.rank(ascending=False, method='min'),
-            'off_rush': off_rush.rank(ascending=False, method='min'),
-            'def_total': def_total.rank(ascending=True, method='min'),
-            'def_pass': def_pass.rank(ascending=True, method='min'),
-            'def_rush': def_rush.rank(ascending=True, method='min'),
             'off_ypg': off_ypg.rank(ascending=False, method='min'),
             'def_ypg': def_ypg.rank(ascending=True, method='min'),
-            'off_ppg': off_ppg.rank(ascending=False, method='min'),
-            'def_ppg': def_ppg.rank(ascending=True, method='min'),
             'off_success': off_success.rank(ascending=False, method='min'),
             'def_success': def_success.rank(ascending=True, method='min')
         }
 
         stats_map = {}
         for abbr, mascot in nfl_mascot_map.items():
-            if abbr in off_total:
+            if abbr in off_ypg:
                 stats_map[mascot] = {
-                    "off_total": f"{off_total.get(abbr, 0):.2f}", "off_total_rank": f"{int(ranks['off_total'].get(abbr, 99))}",
-                    "off_pass": f"{off_pass.get(abbr, 0):.2f}", "off_pass_rank": f"{int(ranks['off_pass'].get(abbr, 99))}",
-                    "off_rush": f"{off_rush.get(abbr, 0):.2f}", "off_rush_rank": f"{int(ranks['off_rush'].get(abbr, 99))}",
-                    "def_total": f"{def_total.get(abbr, 0):.2f}", "def_total_rank": f"{int(ranks['def_total'].get(abbr, 99))}",
-                    "def_pass": f"{def_pass.get(abbr, 0):.2f}", "def_pass_rank": f"{int(ranks['def_pass'].get(abbr, 99))}",
-                    "def_rush": f"{def_rush.get(abbr, 0):.2f}", "def_rush_rank": f"{int(ranks['def_rush'].get(abbr, 99))}",
                     "off_ypg": f"{off_ypg.get(abbr, 0):.1f}", "off_ypg_rank": f"{int(ranks['off_ypg'].get(abbr, 99))}",
                     "def_ypg": f"{def_ypg.get(abbr, 0):.1f}", "def_ypg_rank": f"{int(ranks['def_ypg'].get(abbr, 99))}",
-                    "off_ppg": f"{off_ppg.get(abbr, 0):.1f}", "off_ppg_rank": f"{int(ranks['off_ppg'].get(abbr, 99))}",
-                    "def_ppg": f"{def_ppg.get(abbr, 0):.1f}", "def_ppg_rank": f"{int(ranks['def_ppg'].get(abbr, 99))}",
                     "off_success": f"{off_success.get(abbr, 0):.1f}%", "off_success_rank": f"{int(ranks['off_success'].get(abbr, 99))}",
                     "def_success": f"{def_success.get(abbr, 0):.1f}%", "def_success_rank": f"{int(ranks['def_success'].get(abbr, 99))}",
+                    # Placeholders for nfelo overrides
+                    "off_total": f"{off_total.get(abbr, 0):.2f}", "off_total_rank": "99",
+                    "off_pass": "-", "off_pass_rank": "99",
+                    "off_rush": "-", "off_rush_rank": "99",
+                    "def_total": f"{def_total.get(abbr, 0):.2f}", "def_total_rank": "99",
+                    "def_pass": "-", "def_pass_rank": "99",
+                    "def_rush": "-", "def_rush_rank": "99",
+                    "off_ppg": "-", "off_ppg_rank": "99",
+                    "def_ppg": "-", "def_ppg_rank": "99"
                 }
-        return stats_map
     except Exception as e:
         print(f"⚠️ Error calculating NFL metrics natively: {e}")
         return {}
+
+    # 2. OVERWRITE WITH NFELO OPPONENT-ADJUSTED DATA (Scraping)
+    try:
+        print("🧮 Fetching Opponent-Adjusted EPA and PPG from nfelo HTML...")
+        import requests
+        import io
+        import re
+        
+        nfelo_url = "https://www.nfeloapp.com/nfl-power-ratings/"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(nfelo_url, headers=headers, timeout=10)
+        
+        # Regex replacement to extract text from image tags before pandas parses the tables
+        html_text = re.sub(r'<img[^>]+alt="([^"]+)"[^>]*>', r'\1', res.text)
+        html_text = re.sub(r'<img[^>]+src="[^"]*/([A-Za-z0-9_]+)\.[a-z]{3,4}"[^>]*>', r' \1 ', html_text)
+        
+        dfs = pd.read_html(io.StringIO(html_text))
+        nfelo_df = dfs[0] 
+        
+        if isinstance(nfelo_df.columns, pd.MultiIndex):
+            nfelo_df.columns = ['_'.join(col).strip() for col in nfelo_df.columns.values]
+            
+        team_col = [c for c in nfelo_df.columns if 'Team' in c][0]
+        
+        # Identify columns
+        off_play_col = [c for c in nfelo_df.columns if 'Offensive' in c and 'Play' in c][0]
+        off_pass_col = [c for c in nfelo_df.columns if 'Offensive' in c and 'Pass' in c][0]
+        off_rush_col = [c for c in nfelo_df.columns if 'Offensive' in c and 'Rush' in c][0]
+        
+        def_play_col = [c for c in nfelo_df.columns if 'Defensive' in c and 'Play' in c][0]
+        def_pass_col = [c for c in nfelo_df.columns if 'Defensive' in c and 'Pass' in c][0]
+        def_rush_col = [c for c in nfelo_df.columns if 'Defensive' in c and 'Rush' in c][0]
+        
+        ppg_for_col = [c for c in nfelo_df.columns if 'For' in c.split('_') or 'For' in c][0]
+        ppg_against_col = [c for c in nfelo_df.columns if 'Against' in c.split('_') or 'Against' in c][0]
+
+        # Calculate ranks natively inside pandas for the nfelo metrics
+        nfelo_df['off_tot_rk'] = nfelo_df[off_play_col].rank(ascending=False, method='min')
+        nfelo_df['off_pass_rk'] = nfelo_df[off_pass_col].rank(ascending=False, method='min')
+        nfelo_df['off_rush_rk'] = nfelo_df[off_rush_col].rank(ascending=False, method='min')
+        
+        nfelo_df['def_tot_rk'] = nfelo_df[def_play_col].rank(ascending=True, method='min')
+        nfelo_df['def_pass_rk'] = nfelo_df[def_pass_col].rank(ascending=True, method='min')
+        nfelo_df['def_rush_rk'] = nfelo_df[def_rush_col].rank(ascending=True, method='min')
+        
+        nfelo_df['off_ppg_rk'] = nfelo_df[ppg_for_col].rank(ascending=False, method='min')
+        nfelo_df['def_ppg_rk'] = nfelo_df[ppg_against_col].rank(ascending=True, method='min')
+
+        for idx, row in nfelo_df.iterrows():
+            team_str = str(row[team_col]).lower()
+            
+            for mascot in stats_map.keys():
+                # Matches "eagles" inside "philadelphia eagles" or "phi"
+                if mascot in team_str or mascot[:3] in team_str:
+                    stats_map[mascot].update({
+                        "off_total": f"{float(row[off_play_col]):.3f}",
+                        "off_total_rank": f"{int(row['off_tot_rk'])}",
+                        "off_pass": f"{float(row[off_pass_col]):.3f}",
+                        "off_pass_rank": f"{int(row['off_pass_rk'])}",
+                        "off_rush": f"{float(row[off_rush_col]):.3f}",
+                        "off_rush_rank": f"{int(row['off_rush_rk'])}",
+                        
+                        "def_total": f"{float(row[def_play_col]):.3f}",
+                        "def_total_rank": f"{int(row['def_tot_rk'])}",
+                        "def_pass": f"{float(row[def_pass_col]):.3f}",
+                        "def_pass_rank": f"{int(row['def_pass_rk'])}",
+                        "def_rush": f"{float(row[def_rush_col]):.3f}",
+                        "def_rush_rank": f"{int(row['def_rush_rk'])}",
+                        
+                        "off_ppg": f"{float(row[ppg_for_col]):.1f}",
+                        "off_ppg_rank": f"{int(row['off_ppg_rk'])}",
+                        "def_ppg": f"{float(row[ppg_against_col]):.1f}",
+                        "def_ppg_rank": f"{int(row['def_ppg_rk'])}"
+                    })
+                    break
+                    
+    except Exception as e:
+        print(f"⚠️ Error parsing nfelo HTML overrides: {e}")
+
+    return stats_map
+
 
 def fetch_cfb_stats():
     """Calculates granular EPA, PPG, and YPG directly from sportsdataverse."""
@@ -126,7 +177,7 @@ def fetch_cfb_stats():
         if play_type_col not in pbp.columns:
             play_type_col = [c for c in pbp.columns if 'type' in c.lower()][0]
 
-        # Dynamically hunt for the yards column (handles both ESPN and CFBD formats)
+        # Dynamically hunt for the yards column
         yards_col = 'yards_gained'
         for col in ['yards_gained', 'statYardage', 'yards', 'yds', 'net_yards', 'yds_gained']:
             if col in pbp.columns:
@@ -147,7 +198,6 @@ def fetch_cfb_stats():
         def_pass = pbp_valid[pbp_valid['is_pass']].groupby(def_team_col)[epa_col].mean().round(3)
         def_rush = pbp_valid[pbp_valid['is_rush']].groupby(def_team_col)[epa_col].mean().round(3)
 
-        # Aggregate Yards Per Game
         off_ypg = pbp_valid.groupby([pos_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
         def_ypg = pbp_valid.groupby([def_team_col, 'game_id'])[yards_col].sum().groupby(level=0).mean().round(1)
 
@@ -158,8 +208,7 @@ def fetch_cfb_stats():
         off_success = (pbp_valid.groupby(pos_team_col)['success'].mean() * 100).round(1)
         def_success = (pbp_valid.groupby(def_team_col)['success'].mean() * 100).round(1)
 
- # --- PPG CALCULATION ---
-        # Dynamically hunt for scoring columns
+        # --- PPG CALCULATION ---
         home_pts_col = 'home_points'
         for col in ['home_points', 'home_score', 'homeScore']:
             if col in sched.columns: home_pts_col = col; break
@@ -185,7 +234,6 @@ def fetch_cfb_stats():
         tot_gp = home_gp.add(away_gp, fill_value=0)
         tot_allowed = sched_played.groupby(home_team_col)[away_pts_col].sum().add(sched_played.groupby(away_team_col)[home_pts_col].sum(), fill_value=0)
         
-        # Convert to dictionaries for fuzzy matching
         sched_off_ppg = (tot_pts / tot_gp.replace(0, 1)).round(1)
         sched_def_ppg = (tot_allowed / tot_gp.replace(0, 1)).round(1)
         
@@ -212,7 +260,6 @@ def fetch_cfb_stats():
         for team_name in off_total.index:
             clean_name = str(team_name).lower().replace("state", "st")
             
-            # Safely match PPG stats across mismatched team names
             t_off_ppg, t_def_ppg, t_off_ppg_rk, t_def_ppg_rk = 0.0, 0.0, 999, 999
             
             if team_name in off_ppg_dict:
@@ -255,6 +302,7 @@ def fetch_all_league_stats(league):
         return fetch_nfl_stats()
     return fetch_cfb_stats()
 
+
 def build_matchup_stats_html(away_team, home_team, league, global_stats):
     """Builds a compact, 2-column side-by-side matchup table."""
     away_lower = away_team.lower().replace("state", "st")
@@ -267,14 +315,12 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
         away_data = global_stats.get(away_lower.split()[-1], {})
         home_data = global_stats.get(home_lower.split()[-1], {})
     else:
-        # CFB requires fuzzy matching (e.g. mapping "indiana hoosiers" to "indiana")
         for k, v in global_stats.items():
             if k in away_lower or away_lower in k:
                 away_data = v
             if k in home_lower or home_lower in k:
                 home_data = v
                 
-    # Matchup card suppression fallback
     if not away_data and not home_data:
         return ""
 
@@ -290,28 +336,28 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
         return "#4a5568"
 
     rows = [
-        ("Offense Pass (EPA)", away_data.get('off_pass', '-'), away_data.get('off_pass_rank', '-'),
-                               home_data.get('off_pass', '-'), home_data.get('off_pass_rank', '-')),
-        ("Offense Rush (EPA)", away_data.get('off_rush', '-'), away_data.get('off_rush_rank', '-'),
-                               home_data.get('off_rush', '-'), home_data.get('off_rush_rank', '-')),
-        ("Offense Total (EPA)", away_data.get('off_total', '-'), away_data.get('off_total_rank', '-'),
-                                home_data.get('off_total', '-'), home_data.get('off_total_rank', '-')),
+        ("Offense Pass (Adj EPA)", away_data.get('off_pass', '-'), away_data.get('off_pass_rank', '-'),
+                                   home_data.get('off_pass', '-'), home_data.get('off_pass_rank', '-')),
+        ("Offense Rush (Adj EPA)", away_data.get('off_rush', '-'), away_data.get('off_rush_rank', '-'),
+                                   home_data.get('off_rush', '-'), home_data.get('off_rush_rank', '-')),
+        ("Offense Total (Adj EPA)", away_data.get('off_total', '-'), away_data.get('off_total_rank', '-'),
+                                    home_data.get('off_total', '-'), home_data.get('off_total_rank', '-')),
         ("Offense Success (%)", away_data.get('off_success', '-'), away_data.get('off_success_rank', '-'),
                                 home_data.get('off_success', '-'), home_data.get('off_success_rank', '-')),
         ("DIVIDER", "", "", "", ""),
-        ("Defense Pass (EPA)", away_data.get('def_pass', '-'), away_data.get('def_pass_rank', '-'),
-                               home_data.get('def_pass', '-'), home_data.get('def_pass_rank', '-')),
-        ("Defense Rush (EPA)", away_data.get('def_rush', '-'), away_data.get('def_rush_rank', '-'),
-                               home_data.get('def_rush', '-'), home_data.get('def_rush_rank', '-')),
-        ("Defense Total (EPA)", away_data.get('def_total', '-'), away_data.get('def_total_rank', '-'),
-                                home_data.get('def_total', '-'), home_data.get('def_total_rank', '-')),
+        ("Defense Pass (Adj EPA)", away_data.get('def_pass', '-'), away_data.get('def_pass_rank', '-'),
+                                   home_data.get('def_pass', '-'), home_data.get('def_pass_rank', '-')),
+        ("Defense Rush (Adj EPA)", away_data.get('def_rush', '-'), away_data.get('def_rush_rank', '-'),
+                                   home_data.get('def_rush', '-'), home_data.get('def_rush_rank', '-')),
+        ("Defense Total (Adj EPA)", away_data.get('def_total', '-'), away_data.get('def_total_rank', '-'),
+                                    home_data.get('def_total', '-'), home_data.get('def_total_rank', '-')),
         ("Defense Success (%)", away_data.get('def_success', '-'), away_data.get('def_success_rank', '-'),
                                 home_data.get('def_success', '-'), home_data.get('def_success_rank', '-')),
         ("DIVIDER", "", "", "", ""),
-        ("Scoring (PPG)", away_data.get('off_ppg', '-'), away_data.get('off_ppg_rank', '-'),
-                          home_data.get('off_ppg', '-'), home_data.get('off_ppg_rank', '-')),
-        ("Opp Scoring (PPG)", away_data.get('def_ppg', '-'), away_data.get('def_ppg_rank', '-'),
-                              home_data.get('def_ppg', '-'), home_data.get('def_ppg_rank', '-')),
+        ("Scoring (Adj PPG)", away_data.get('off_ppg', '-'), away_data.get('off_ppg_rank', '-'),
+                              home_data.get('off_ppg', '-'), home_data.get('off_ppg_rank', '-')),
+        ("Opp Scoring (Adj PPG)", away_data.get('def_ppg', '-'), away_data.get('def_ppg_rank', '-'),
+                                  home_data.get('def_ppg', '-'), home_data.get('def_ppg_rank', '-')),
         ("Total Yards (YPG)", away_data.get('off_ypg', '-'), away_data.get('off_ypg_rank', '-'),
                               home_data.get('off_ypg', '-'), home_data.get('off_ypg_rank', '-')),
         ("Opp Yards (YPG)", away_data.get('def_ypg', '-'), away_data.get('def_ypg_rank', '-'),
@@ -365,9 +411,13 @@ if __name__ == '__main__':
         ("Indiana Hoosiers", "Ohio State Buckeyes", "NCAAF", cfb_global_stats)
     ]
     
+    full_html = "<div style='max-width: 800px; margin: auto;'>"
     for away, home, league, global_dict in test_matchups:
         html_block = build_matchup_stats_html(away, home, league, global_dict)
-        print(f"\n--- {away} vs {home} ---")
-        print(html_block)
+        full_html += f"<h3 style='font-family: sans-serif; text-align: center;'>{league} Matchup</h3>" + html_block
+    full_html += "</div>"
         
-    print("\n✅ Native module execution complete.")
+    with open("test_matchups.html", "w", encoding="utf-8") as f:
+        f.write(full_html)
+        
+    print("\n✅ Native module execution complete. Open 'test_matchups.html' in your folder to view the visually rendered tables!")
