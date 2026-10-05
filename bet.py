@@ -1126,12 +1126,15 @@ def render_calendar_table(games_list, show_league_badge=True):
                 
                 # Helper function to find team rank from football_stats['NFL']
                 def get_rank_badge(team_str):
-                    t_clean = team_str.lower()
+                    t_lower = team_str.lower()
                     nfl_data = football_stats.get("NFL", {})
-                    for mascot, metrics in nfl_data.items():
-                        if mascot in t_clean or mascot[:3] in t_clean:
+                    
+                    for key, metrics in nfl_data.items():
+                        # Match either the full name/mascot key or substring
+                        if key in t_lower or t_lower in key or key[:3] in t_lower:
                             rk = metrics.get("net_epa_rank")
-                            if rk and rk != "99":
+                            # Accept any valid rank string (even if it's currently a placeholder or number)
+                            if rk and str(rk) != "99":
                                 return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>"
                     return ""
 
