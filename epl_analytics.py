@@ -293,38 +293,46 @@ def fetch_epl_injuries(team_name):
         return ""
 
 def fetch_epl_xpts_rankings():
-    """Extracts xPTS rankings directly from Understat's embedded JSON payload."""
-    import json
-    import re
-    import requests
-    print("⚽ Fetching EPL xPTS Rankings from Understat...")
-    url = "https://understat.com/league/EPL"
+    """Fetches EPL xPTS rankings safely using the understatapi client."""
+    from understatapi import UnderstatClient
+    from datetime import datetime
+    
+    print("⚽ Fetching EPL xPTS Rankings via Understat API...")
+    current_year = str(datetime.now().year)
+    previous_year = str(int(current_year) - 1)
     
     try:
-        res = requests.get(url, timeout=10)
-        match = re.search(r"teamsData\s*=\s*JSON\.parse\('([^']+)'\)", res.text)
-        
-        if match:
-            raw_data = match.group(1).encode('utf-8').decode('unicode_escape')
-            teams_data = json.loads(raw_data)
-            
+        with UnderstatClient() as understat:
+            # Try current season first, fall back to previous if not populated
+            try:
+                league_data = understat.league(league="EPL").get_team_data(season=current_year)
+            except Exception:
+                league_data = understat.league(league="EPL").get_team_data(season=previous_year)
+                
+            if not league_data:
+                return {}
+                
             team_xpts = []
-            for team_id, team_info in teams_data.items():
-                name = team_info['title'].lower()
-                history = team_info.get('history', [])
-                # FIX: Cast string 'xpts' to float so sum() doesn't crash
+            for team_id, data in league_data.items():
+                name = data['title'].lower()
+                history = data.get('history', [])
+                
+                # Sum up expected points from all matches this season
                 total_xpts = sum(float(m.get('xpts', 0)) for m in history)
                 team_xpts.append((name, total_xpts))
                 
+            # Sort by highest xPTS to lowest
             team_xpts.sort(key=lambda x: x[1], reverse=True)
             
             epl_ranks = {}
             for rank, (name, xpts) in enumerate(team_xpts, 1):
-                epl_ranks[name.replace('_', ' ')] = {"rank": str(rank)}
+                clean_name = name.replace('_', ' ')
+                epl_ranks[clean_name] = {"rank": str(rank)}
+                # Store mascot/last word as a safety fallback for schedule matching
+                epl_ranks[clean_name.split()[-1]] = {"rank": str(rank)}
                 
             return epl_ranks
             
-        return {}
     except Exception as e:
-        print(f"⚠️ Error parsing Understat xPTS: {e}")
+        print(f"⚠️ Error fetching Understat xPTS via API: {e}")
         return {}

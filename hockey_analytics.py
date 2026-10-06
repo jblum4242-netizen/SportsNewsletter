@@ -217,38 +217,45 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     return html
 
 def fetch_nhl_power_rankings():
-    """Scrapes live NHL Power Rankings from MoneyPuck.com using logo order."""
+    """Scrapes live NHL Power Rankings from MoneyPuck.com seamlessly."""
     import re
     import requests
+    import pandas as pd
+    import io
     print("🏒 Fetching NHL Power Rankings from MoneyPuck...")
     url = "https://moneypuck.com/power.htm"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # Invert MP_MAP to translate codes back to full team names
-    code_to_name = {v.upper(): k for k, v in MP_MAP.items()}
-    # Account for 2-letter logo codes MoneyPuck occasionally uses
-    code_to_name.update({"LA": "los angeles kings", "TB": "tampa bay lightning", "NJ": "new jersey devils"})
-
     try:
         res = requests.get(url, headers=headers, timeout=10)
-        # Extract logo codes in ranked order from top to bottom
-        teams = re.findall(r'logos/nhl/([A-Za-z]+)\.png', res.text)
         
-        seen = set()
-        ordered_teams = []
-        for t in teams:
-            t_upper = t.upper()
-            if t_upper not in seen:
-                seen.add(t_upper)
-                ordered_teams.append(t_upper)
-                
+        # 1. Broad regex: Replace logo img tags with their raw abbreviations (e.g. "phi")
+        html_text = re.sub(r'<img[^>]+src="[^"]*/([A-Za-z0-9_]+)\.[a-z]{3,4}"[^>]*>', r' \1 ', res.text)
+        dfs = pd.read_html(io.StringIO(html_text))
+        power_df = dfs[0]
+        
+        # 2. Invert MP_MAP to translate abbreviation codes back to full team names
+        code_to_name = {v.upper(): k for k, v in MP_MAP.items()}
+        # Add MoneyPuck's weird 2-letter exceptions
+        code_to_name.update({"LA": "los angeles kings", "TB": "tampa bay lightning", "NJ": "new jersey devils"})
+        
         nhl_ranks = {}
-        for rank, code in enumerate(ordered_teams, 1):
-            full_name = code_to_name.get(code, code.lower())
-            nhl_ranks[full_name] = {"rank": str(rank)}
-            # Also store the mascot just in case (e.g. 'sharks')
-            nhl_ranks[full_name.split()[-1]] = {"rank": str(rank)}
+        for idx, row in power_df.iterrows():
+            rank = str(idx + 1)
+            found_code = None
             
+            # 3. Search all cells in this row for the team code
+            for cell in row:
+                cell_str = str(cell).strip().upper()
+                if cell_str in code_to_name:
+                    found_code = cell_str
+                    break
+                    
+            if found_code:
+                full_name = code_to_name[found_code]
+                nhl_ranks[full_name] = {"rank": rank}
+                nhl_ranks[full_name.split()[-1]] = {"rank": rank}
+                
         return nhl_ranks
     except Exception as e:
         print(f"⚠️ Error fetching NHL Power Rankings: {e}")
