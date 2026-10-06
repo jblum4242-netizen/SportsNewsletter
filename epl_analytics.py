@@ -296,28 +296,26 @@ def fetch_epl_xpts_rankings():
     """Extracts xPTS rankings directly from Understat's embedded JSON payload."""
     import json
     import re
+    import requests
     print("⚽ Fetching EPL xPTS Rankings from Understat...")
     url = "https://understat.com/league/EPL"
     
     try:
         res = requests.get(url, timeout=10)
-        # Find the teamsData JSON object embedded in the script tag
         match = re.search(r"teamsData\s*=\s*JSON\.parse\('([^']+)'\)", res.text)
         
         if match:
-            # Decode the hex escapes into a valid JSON string
             raw_data = match.group(1).encode('utf-8').decode('unicode_escape')
             teams_data = json.loads(raw_data)
             
-            # Calculate total season xPTS for each team
             team_xpts = []
             for team_id, team_info in teams_data.items():
                 name = team_info['title'].lower()
                 history = team_info.get('history', [])
-                total_xpts = sum(match.get('xpts', 0) for match in history)
+                # FIX: Cast string 'xpts' to float so sum() doesn't crash
+                total_xpts = sum(float(m.get('xpts', 0)) for m in history)
                 team_xpts.append((name, total_xpts))
                 
-            # Sort by highest xPTS to lowest
             team_xpts.sort(key=lambda x: x[1], reverse=True)
             
             epl_ranks = {}

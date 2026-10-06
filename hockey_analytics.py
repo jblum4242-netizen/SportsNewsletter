@@ -3,6 +3,19 @@ import numpy as np
 import requests
 import io
 
+# --- TOP-LEVEL MODULE MAP ---
+MP_MAP = {
+    "anaheim ducks": "ANA", "boston bruins": "BOS", "buffalo sabres": "BUF", "calgary flames": "CGY",
+    "carolina hurricanes": "CAR", "chicago blackhawks": "CHI", "colorado avalanche": "COL", 
+    "columbus blue jackets": "CBJ", "dallas stars": "DAL", "detroit red wings": "DET", "edmonton oilers": "EDM",
+    "florida panthers": "FLA", "los angeles kings": "LAK", "minnesota wild": "MIN", "montreal canadiens": "MTL",
+    "nashville predators": "NSH", "new jersey devils": "NJD", "new york islanders": "NYI", "new york rangers": "NYR",
+    "ottawa senators": "OTT", "philadelphia flyers": "PHI", "pittsburgh penguins": "PIT", "san jose sharks": "SJS",
+    "seattle kraken": "SEA", "st. louis blues": "STL", "tampa bay lightning": "TBL", "toronto maple leafs": "TOR",
+    "utah hockey club": "UTA", "vancouver canucks": "VAN", "vegas golden knights": "VGK", "washington capitals": "WSH",
+    "winnipeg jets": "WPG"
+}
+
 def fetch_official_nhl_stats():
     """Fetches official team stats directly from the NHL APIs (Standings + Special Teams)."""
     stats_dict = {}
@@ -130,29 +143,34 @@ def fetch_moneypuck_stats():
 
 def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     """Builds a unified HTML table comparing official API metrics and MoneyPuck models."""
-    if not official_stats:
+    if not official_stats and not mp_stats:
         return ""
         
-    away_mascot = away_team.lower().split()[-1]
-    home_mascot = home_team.lower().split()[-1]
+    away_clean = away_team.lower().strip()
+    home_clean = home_team.lower().strip()
+    away_mascot = away_clean.split()[-1]
+    home_mascot = home_clean.split()[-1]
     
-    a_off = next((v for k, v in official_stats.items() if away_mascot in k), {})
-    h_off = next((v for k, v in official_stats.items() if home_mascot in k), {})
+    # 1. Official NHL API Lookup (matches mascot or full name)
+    a_off = next((v for k, v in official_stats.items() if away_mascot in k or k in away_clean), {})
+    h_off = next((v for k, v in official_stats.items() if home_mascot in k or k in home_clean), {})
 
-    mp_map = {
-        "anaheim ducks": "ANA", "boston bruins": "BOS", "buffalo sabres": "BUF", "calgary flames": "CGY",
-        "carolina hurricanes": "CAR", "chicago blackhawks": "CHI", "colorado avalanche": "COL", 
-        "columbus blue jackets": "CBJ", "dallas stars": "DAL", "detroit red wings": "DET", "edmonton oilers": "EDM",
-        "florida panthers": "FLA", "los angeles kings": "LAK", "minnesota wild": "MIN", "montreal canadiens": "MTL",
-        "nashville predators": "NSH", "new jersey devils": "NJD", "new york islanders": "NYI", "new york rangers": "NYR",
-        "ottawa senators": "OTT", "philadelphia flyers": "PHI", "pittsburgh penguins": "PIT", "san jose sharks": "SJS",
-        "seattle kraken": "SEA", "st. louis blues": "STL", "tampa bay lightning": "TBL", "toronto maple leafs": "TOR",
-        "utah hockey club": "UTA", "vancouver canucks": "VAN", "vegas golden knights": "VGK", "washington capitals": "WSH",
-        "winnipeg jets": "WPG"
-    }
-    
-    a_mp = mp_stats.get(mp_map.get(away_team.lower().strip(), ""), {})
-    h_mp = mp_stats.get(mp_map.get(home_team.lower().strip(), ""), {})
+    # 2. MoneyPuck Lookup (using top-level MP_MAP with fuzzy mascot fallback)
+    def find_mp_code(team_name, mascot):
+        # Direct dictionary match
+        if team_name in MP_MAP:
+            return MP_MAP[team_name]
+        # Match by partial string or mascot
+        for full_name, code in MP_MAP.items():
+            if mascot in full_name or full_name in team_name:
+                return code
+        return ""
+
+    a_code = find_mp_code(away_clean, away_mascot)
+    h_code = find_mp_code(home_clean, home_mascot)
+
+    a_mp = mp_stats.get(a_code, {})
+    h_mp = mp_stats.get(h_code, {})
 
     html = "<table style='width: 100%; font-size: 11px; text-align: right; border-collapse: collapse; margin-bottom: 12px;'>"
     html += "<tr style='background-color: #1e293b; color: white;'>"
@@ -199,36 +217,37 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     return html
 
 def fetch_nhl_power_rankings():
-    """Scrapes live NHL Power Rankings from MoneyPuck.com"""
+    """Scrapes live NHL Power Rankings from MoneyPuck.com using logo order."""
     import re
     import requests
-    import pandas as pd
-    import io
     print("🏒 Fetching NHL Power Rankings from MoneyPuck...")
     url = "https://moneypuck.com/power.htm"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
+    # Invert MP_MAP to translate codes back to full team names
+    code_to_name = {v.upper(): k for k, v in MP_MAP.items()}
+    # Account for 2-letter logo codes MoneyPuck occasionally uses
+    code_to_name.update({"LA": "los angeles kings", "TB": "tampa bay lightning", "NJ": "new jersey devils"})
+
     try:
         res = requests.get(url, headers=headers, timeout=10)
-        # Extract team abbreviations (e.g., 'phi') from logo image tags
-        html_text = re.sub(r'<img[^>]+src="[^"]*/([A-Za-z0-9_]+)\.[a-z]{3,4}"[^>]*>', r' \1 ', res.text)
+        # Extract logo codes in ranked order from top to bottom
+        teams = re.findall(r'logos/nhl/([A-Za-z]+)\.png', res.text)
         
-        dfs = pd.read_html(io.StringIO(html_text))
-        power_df = dfs[0]
-        
+        seen = set()
+        ordered_teams = []
+        for t in teams:
+            t_upper = t.upper()
+            if t_upper not in seen:
+                seen.add(t_upper)
+                ordered_teams.append(t_upper)
+                
         nhl_ranks = {}
-        
-        # Safely find the ranking column (checking as a string to prevent integer errors)
-        rank_cols = [c for c in power_df.columns if 'Rank' in str(c)]
-        rank_col = rank_cols[0] if rank_cols else None
-        
-        for idx, row in power_df.iterrows():
-            # If a 'Rank' column exists, use it. Otherwise, use the row index (1 to 32).
-            rank = str(row[rank_col]).strip() if rank_col is not None else str(idx + 1)
-            
-            # The abbreviation usually falls into the second column after the image regex replacement
-            team_abbr = str(row.iloc[1]).strip().lower()
-            nhl_ranks[team_abbr] = {"rank": rank}
+        for rank, code in enumerate(ordered_teams, 1):
+            full_name = code_to_name.get(code, code.lower())
+            nhl_ranks[full_name] = {"rank": str(rank)}
+            # Also store the mascot just in case (e.g. 'sharks')
+            nhl_ranks[full_name.split()[-1]] = {"rank": str(rank)}
             
         return nhl_ranks
     except Exception as e:

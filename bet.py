@@ -1137,13 +1137,12 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
                 def get_league_badge_and_val(team_str, lg):
                     t_lower = team_str.lower()
                     league_data = global_stats.get(lg, {})
+                    mascot = t_lower.split()[-1]
                     
                     for key, metrics in league_data.items():
                         k_lower = key.lower()
-                        mascot = t_lower.split()[-1]
-                        
-                        # Match full name, abbreviation key, or mascot
-                        if k_lower in t_lower or t_lower in k_lower or k_lower == mascot or (len(mascot) > 3 and mascot in k_lower):
+                        # Matches full name ("san jose sharks"), city, or mascot ("sharks")
+                        if k_lower == t_lower or k_lower in t_lower or t_lower in k_lower or k_lower == mascot:
                             rk = metrics.get("net_epa_rank") or metrics.get("rank")
                             if rk and str(rk) not in ["99", "-", ""]:
                                 return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>", int(rk)
