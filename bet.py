@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from googlenewsdecoder import gnewsdecoder
 import subprocess
 
-from epl_analytics import fetch_epl_xg_form, fetch_epl_head_to_head, fetch_epl_injuries, fetch_epl_team_metrics
+from epl_analytics import fetch_epl_xg_form, fetch_epl_head_to_head, fetch_epl_injuries, fetch_epl_team_metrics, fetch_epl_xpts_rankings
 
 import football_analytics as football_news
 
@@ -1106,12 +1106,8 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
     if not games_list:
         return "<div style='color: #a0aec0; font-size: 12px; padding: 10px 0;'>No games scheduled.</div>"
     
-    # Safety net: Try to grab the global dictionary if one wasn't explicitly passed
     if global_stats is None:
-        try:
-            global_stats = football_stats
-        except NameError:
-            global_stats = {}
+        global_stats = {}
 
     games_list.sort(key=lambda x: x['game_datetime'])
     chtml = "<table style='width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 5px;'>"
@@ -1122,36 +1118,52 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
             current_date_header = g['date_header_str']
             chtml += f'<tr style="background-color: #f1f5f9;"><td colspan="3" style="padding: 6px 10px; font-weight: 700; color: #475569; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; border-radius: 4px;">📅 {current_date_header}</td></tr>'
 
-        # Modern TV Badge
         tv_station = f" <span style='background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;'>📺 {g['network']}</span>" if g['network'] else ""
         
-        # --- NFL NET EPA RANK INJECTION ---
         matchup_text = g['matchup']
-        if g['league'].upper() == "NFL" and ' vs. ' in matchup_text:
+        is_marquee = False
+        league_key = g['league'].upper()
+
+        # --- 1. CFB LOGIC (Both teams ranked in AP Top 25) ---
+        if league_key == "NCAAF":
+            if matchup_text.startswith("(") and " vs. (" in matchup_text:
+                is_marquee = True
+
+        # --- 2. NFL, EPL, NHL RANK INJECTION & MARQUEE CHECK ---
+        elif league_key in ["NFL", "EPL", "NHL"] and ' vs. ' in matchup_text:
             try:
                 away_raw, home_raw = matchup_text.split(' vs. ')
                 
-                # Helper function using the explicitly passed global_stats
-                def get_rank_badge(team_str):
+                def get_league_badge_and_val(team_str, lg):
                     t_lower = team_str.lower()
-                    nfl_data = global_stats.get("NFL", {})
+                    league_data = global_stats.get(lg, {})
                     
-                    for key, metrics in nfl_data.items():
-                        if key in t_lower or t_lower in key or key[:3] in t_lower:
-                            rk = metrics.get("net_epa_rank")
-                            if rk and str(rk) != "99":
-                                return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>"
-                    return ""
+                    for key, metrics in league_data.items():
+                        k_lower = key.lower()
+                        mascot = t_lower.split()[-1]
+                        
+                        # Match full name, abbreviation key, or mascot
+                        if k_lower in t_lower or t_lower in k_lower or k_lower == mascot or (len(mascot) > 3 and mascot in k_lower):
+                            rk = metrics.get("net_epa_rank") or metrics.get("rank")
+                            if rk and str(rk) not in ["99", "-", ""]:
+                                return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>", int(rk)
+                    return "", 999
 
-                away_badge = get_rank_badge(away_raw)
-                home_badge = get_rank_badge(home_raw)
+                away_badge, away_val = get_league_badge_and_val(away_raw, league_key)
+                home_badge, home_val = get_league_badge_and_val(home_raw, league_key)
                 
                 matchup_text = f"{away_raw}{away_badge} vs. {home_raw}{home_badge}"
-            except Exception as e:
-                # 🚨 NO MORE SILENT FAILURES
-                print(f"⚠️ Error formatting NFL ranks in schedule: {e}")
 
-        # Matchup text with live score handling
+                # Marquee thresholds: Top 10 for NFL/NHL, Top 5 for EPL
+                if league_key in ["NFL", "NHL"] and away_val <= 10 and home_val <= 10:
+                    is_marquee = True
+                elif league_key == "EPL" and away_val <= 5 and home_val <= 5:
+                    is_marquee = True
+
+            except Exception as e:
+                print(f"⚠️ Error formatting {league_key} ranks in schedule: {e}")
+
+        # Live score handling
         if g['real_status'] in ['completed', 'in_progress'] and g['live_feed']:
             matchup_display = f"<span style='color: #dc2626; font-weight: bold;'>{g['live_feed']}</span>"
         else:
@@ -1159,7 +1171,11 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
             
         league_badge = f"<td style='padding: 8px 10px; color: #2563eb; font-weight: 700; width: 12%;'>[{g['league']}]</td>" if show_league_badge else ""
         
-        chtml += f"<tr style='border-bottom: 1px solid #f1f5f9;'><td style='padding: 8px 10px; color: #475569; font-weight: 700; width: 22%;'>{g['time']}</td>{league_badge}<td style='padding: 8px 10px; color: #1e293b;'>{matchup_display}</td></tr>"
+        # Marquee styling
+        row_bg = "#fffbeb" if is_marquee else "transparent"
+        text_style = "color: #0f172a; font-weight: 800;" if is_marquee else "color: #1e293b;"
+        
+        chtml += f"<tr style='border-bottom: 1px solid #f1f5f9; background-color: {row_bg};'><td style='padding: 8px 10px; color: #475569; font-weight: 700; width: 22%;'>{g['time']}</td>{league_badge}<td style='padding: 8px 10px; {text_style}'>{matchup_display}</td></tr>"
         
     chtml += "</table>"
     return chtml
@@ -1291,6 +1307,17 @@ def build_sports_briefings():
     nhl_official = hockey_analytics.fetch_official_nhl_stats() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
     nhl_advanced = hockey_analytics.fetch_moneypuck_stats() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
 
+    # --- NEW: Fetch NHL Power Rankings & EPL xPTS ---
+    nhl_power_ranks = hockey_analytics.fetch_nhl_power_rankings() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
+    epl_xpts_ranks = fetch_epl_xpts_rankings() if "EPL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
+
+    # Unified stats dictionary accessible across all schedule renderers
+    global_stats = {
+        "NFL": football_stats.get("NFL", {}),
+        "NHL": nhl_power_ranks,
+        "EPL": epl_xpts_ranks
+    }
+
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
     today_date = now_eastern.date()
@@ -1414,7 +1441,7 @@ def build_sports_briefings():
 
     # Filter Today's Games
     today_games = [g for g in all_monitored_games if g['game_datetime'].date() == today_date]
-    today_table_html = render_calendar_table(today_games, show_league_badge=True)
+    today_table_html = render_calendar_table(today_games, show_league_badge=True, global_stats=global_stats)
 
 # ---------------------------------------------------------
     # 3. BUILD LEAGUE TABS (Schedule + Matchup Cards)
@@ -1633,19 +1660,23 @@ def build_sports_briefings():
         # ... (keep the if/else logic determining league_schedule_games)
         
         # --- NEW: NFL gets the nfelo link, other leagues stay standard ---
-        if league.upper() == "NFL":
-            boards_html += (
-                f"<div class='card-container'>"
-                f"<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>"
-                f"  <h3 style='margin: 0; color: #1e293b; font-size: 15px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
-                f"  <a href='https://www.nfeloapp.com/nfl-power-ratings/' target='_blank' style='font-size: 12px; color: #2563eb; text-decoration: none; font-weight: 600;'>Ratings by nfelo ↗</a>"
-                f"</div>"
-            )
-        else:
-            boards_html += f"<div class='card-container'><h3 style='margin-top: 0; color: #1e293b; font-size: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
-            
-        # 🚨 THIS IS THE UPDATED CALLER BLOCK 
-        boards_html += render_calendar_table(league_schedule_games, show_league_badge=False, global_stats=football_stats)
+        # Dynamic attribution links per league
+        league_links = {
+            "NFL": ("https://www.nfeloapp.com/nfl-power-ratings/", "Ratings by nfelo ↗"),
+            "EPL": ("https://understat.com/league/EPL", "xPTS by Understat ↗"),
+            "NHL": ("https://moneypuck.com/power.htm", "Rankings by MoneyPuck ↗")
+        }
+        link_url, link_text = league_links.get(league.upper(), (None, None))
+        
+        boards_html += f"<div class='card-container'>"
+        boards_html += f"<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>"
+        boards_html += f"  <h3 style='margin: 0; color: #1e293b; font-size: 15px;'>📅 Upcoming {league} Schedule ({days_label})</h3>"
+        if link_url:
+            boards_html += f"  <a href='{link_url}' target='_blank' style='font-size: 12px; color: #2563eb; text-decoration: none; font-weight: 600;'>{link_text}</a>"
+        boards_html += f"</div>"
+
+        # Pass global_stats (which contains NFL, NHL, and EPL)
+        boards_html += render_calendar_table(league_schedule_games, show_league_badge=False, global_stats=global_stats)
         boards_html += "</div>"
         
         # 2. Detailed Matchup Analysis Blocks

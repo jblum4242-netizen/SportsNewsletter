@@ -291,3 +291,42 @@ def fetch_epl_injuries(team_name):
     except Exception as e:
         print(f"Injury fetch error for {team_name}: {e}")
         return ""
+
+def fetch_epl_xpts_rankings():
+    """Extracts xPTS rankings directly from Understat's embedded JSON payload."""
+    import json
+    import re
+    print("⚽ Fetching EPL xPTS Rankings from Understat...")
+    url = "https://understat.com/league/EPL"
+    
+    try:
+        res = requests.get(url, timeout=10)
+        # Find the teamsData JSON object embedded in the script tag
+        match = re.search(r"teamsData\s*=\s*JSON\.parse\('([^']+)'\)", res.text)
+        
+        if match:
+            # Decode the hex escapes into a valid JSON string
+            raw_data = match.group(1).encode('utf-8').decode('unicode_escape')
+            teams_data = json.loads(raw_data)
+            
+            # Calculate total season xPTS for each team
+            team_xpts = []
+            for team_id, team_info in teams_data.items():
+                name = team_info['title'].lower()
+                history = team_info.get('history', [])
+                total_xpts = sum(match.get('xpts', 0) for match in history)
+                team_xpts.append((name, total_xpts))
+                
+            # Sort by highest xPTS to lowest
+            team_xpts.sort(key=lambda x: x[1], reverse=True)
+            
+            epl_ranks = {}
+            for rank, (name, xpts) in enumerate(team_xpts, 1):
+                epl_ranks[name.replace('_', ' ')] = {"rank": str(rank)}
+                
+            return epl_ranks
+            
+        return {}
+    except Exception as e:
+        print(f"⚠️ Error parsing Understat xPTS: {e}")
+        return {}

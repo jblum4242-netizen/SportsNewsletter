@@ -198,6 +198,43 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     html += "</table>"
     return html
 
+def fetch_nhl_power_rankings():
+    """Scrapes live NHL Power Rankings from MoneyPuck.com"""
+    import re
+    import requests
+    import pandas as pd
+    import io
+    print("🏒 Fetching NHL Power Rankings from MoneyPuck...")
+    url = "https://moneypuck.com/power.htm"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        # Extract team abbreviations (e.g., 'phi') from logo image tags
+        html_text = re.sub(r'<img[^>]+src="[^"]*/([A-Za-z0-9_]+)\.[a-z]{3,4}"[^>]*>', r' \1 ', res.text)
+        
+        dfs = pd.read_html(io.StringIO(html_text))
+        power_df = dfs[0]
+        
+        nhl_ranks = {}
+        
+        # Safely find the ranking column (checking as a string to prevent integer errors)
+        rank_cols = [c for c in power_df.columns if 'Rank' in str(c)]
+        rank_col = rank_cols[0] if rank_cols else None
+        
+        for idx, row in power_df.iterrows():
+            # If a 'Rank' column exists, use it. Otherwise, use the row index (1 to 32).
+            rank = str(row[rank_col]).strip() if rank_col is not None else str(idx + 1)
+            
+            # The abbreviation usually falls into the second column after the image regex replacement
+            team_abbr = str(row.iloc[1]).strip().lower()
+            nhl_ranks[team_abbr] = {"rank": rank}
+            
+        return nhl_ranks
+    except Exception as e:
+        print(f"⚠️ Error fetching NHL Power Rankings: {e}")
+        return {}
+
 if __name__ == "__main__":
     import json
     
