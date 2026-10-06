@@ -1390,7 +1390,7 @@ def build_sports_briefings():
             if game_time and today_date <= game_time.date() <= future_limit.date():
                 final_display_list.append(g)
         
-        if league.upper() not in ["NFL", "NCAAB", "NCAAF", "EPL", "MLB"]:
+        if league.upper() not in ["NFL", "NCAAB", "NCAAF", "EPL", "MLB", "NHL", "NBA"]:
             final_display_list = final_display_list[:5]
             
         league_slates[league] = final_display_list

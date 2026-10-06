@@ -217,73 +217,74 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     return html
 
 def fetch_nhl_power_rankings():
-    """Scrapes live NHL Power Rankings directly from MoneyPuck's raw HTML rows."""
-    import re
-    import requests
-    print("🏒 Fetching NHL Power Rankings from MoneyPuck...")
-    url = "https://moneypuck.com/power.htm"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    
+    """Fetches MoneyPuck NHL power rankings directly from the backend CSV."""
+    import io
+    import csv
+    import cloudscraper
+
+    print("🏒 Fetching NHL Power Rankings from MoneyPuck CSV...")
+    csv_url = "https://moneypuck.com/moneypuck/powerRankings/gen2Model/rankings_current.csv"
+
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        
-        # Invert MP_MAP to translate abbreviation codes back to full team names
+        scraper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "desktop": True}
+        )
+        res = scraper.get(csv_url, timeout=15)
+        if res.status_code != 200:
+            print(f"⚠️ Failed to fetch MoneyPuck CSV: HTTP {res.status_code}")
+            return {}
+
         code_to_name = {v.upper(): k for k, v in MP_MAP.items()}
-        # Add 2-letter codes and explicitly handle the 2026 Utah Mammoth rebrand
         code_to_name.update({
-            "LA": "los angeles kings", 
-            "TB": "tampa bay lightning", 
+            "LA": "los angeles kings",
+            "TB": "tampa bay lightning",
             "NJ": "new jersey devils",
-            "UTA": "utah mammoth" 
+            "UTA": "utah mammoth",
         })
-        
-        # 1. Isolate every table row in the HTML
-        rows = re.findall(r'<tr.*?>(.*?)</tr>', res.text, re.IGNORECASE | re.DOTALL)
-        
+
+        reader = csv.DictReader(io.StringIO(res.text))
         nhl_ranks = {}
         rank_counter = 1
-        
-        for row in rows:
-            # 2. Look for the first image source inside the row, ignoring the file extension
-            img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', row)
-            if img_match:
-                # Extract filename without extension (e.g., /logos/nhl/MIN.svg -> MIN)
-                code = img_match.group(1).split('/')[-1].split('.')[0].upper()
-                
-                if code in code_to_name:
-                    full_name = code_to_name[code]
-                    if full_name not in nhl_ranks:
-                        nhl_ranks[full_name] = {"rank": str(rank_counter)}
-                        # Store mascot fallback (e.g. "mammoth" or "canadiens")
-                        nhl_ranks[full_name.split()[-1]] = {"rank": str(rank_counter)}
-                        rank_counter += 1
-                        
+
+        for row in reader:
+            # Check common column names for the team identifier
+            raw_team = (
+                row.get("team")
+                or row.get("teamCode")
+                or row.get("Team")
+                or row.get("name")
+                or list(row.values())[0]
+            )
+            if not raw_team:
+                continue
+
+            cleaned = raw_team.strip().upper()
+            full_name = None
+
+            if cleaned in code_to_name:
+                full_name = code_to_name[cleaned]
+            else:
+                for k in MP_MAP.keys():
+                    if cleaned.lower() == k or cleaned.lower() == k.split()[-1]:
+                        full_name = k
+                        break
+
+            # If the CSV has a dedicated rank column, prefer it; otherwise use file row order
+            rank_val = str(row.get("rank") or row.get("Rank") or rank_counter)
+
+            if full_name and full_name not in nhl_ranks:
+                nhl_ranks[full_name] = {"rank": rank_val}
+                nhl_ranks[full_name.split()[-1]] = {"rank": rank_val}
+                rank_counter += 1
+
         return nhl_ranks
+
     except Exception as e:
-        print(f"⚠️ Error fetching NHL Power Rankings: {e}")
+        print(f"⚠️ Error fetching NHL Power Rankings CSV: {e}")
         return {}
 
-if __name__ == "__main__":
-    import json
-    
-    print("🏒 Testing Official NHL API Fetcher...")
-    nhl_data = fetch_official_nhl_stats()
-    print(f"Found official stats for {len(nhl_data)} teams.")
-    if nhl_data:
-        sample_team = "flyers" if "flyers" in nhl_data else next(iter(nhl_data.keys()))
-        print(f"Sample Official ({sample_team}): {json.dumps(nhl_data[sample_team], indent=2)}")
-
-    print("\n📈 Testing MoneyPuck Fetcher...")
-    mp_data = fetch_moneypuck_stats()
-    print(f"Found MoneyPuck stats for {len(mp_data)} teams.")
-    if mp_data:
-        sample_mp = "PHI" if "PHI" in mp_data else next(iter(mp_data.keys()))
-        print(f"Sample MoneyPuck ({sample_mp}): HD_xGF% {mp_data.get(sample_mp, {}).get('HD_xGF%')} | PDO {mp_data.get(sample_mp, {}).get('PDO')}")
-
-    print("\n🧱 Testing HTML Builder...")
-    html_out = build_nhl_matchup_html("Philadelphia Flyers", "New York Rangers", nhl_data, mp_data)
-    if html_out:
-        print("✅ HTML built successfully!")
-        print(html_out[:250] + "...\n[Truncated for readability]")
-    else:
-        print("❌ HTML build failed or returned empty.")
+if __name__ == '__main__':
+    ranks = fetch_nhl_power_rankings()
+    print(f"\n--- Found {len(ranks)} rank entries ---")
+    for team, data in list(ranks.items())[:10]:
+        print(f"{team:<25} -> #{data.get('rank')}")
