@@ -1135,14 +1135,32 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
                 away_raw, home_raw = matchup_text.split(' vs. ')
                 
                 def get_league_badge_and_val(team_str, lg):
-                    t_lower = team_str.lower()
+                    t_lower = team_str.lower().strip()
                     league_data = global_stats.get(lg, {})
+
+                    # --- EPL MATCHING (Avoid suffix collisions like "City" or "United") ---
+                    if lg == "EPL":
+                        # 1. Exact match first
+                        if t_lower in league_data:
+                            rk = league_data[t_lower].get("rank")
+                            if rk: return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>", int(rk)
+                        
+                        # 2. Substring match, but ignore generic words
+                        generic_suffixes = ["fc", "afc", "city", "united", "town", "hotspur", "wanderers", "albion"]
+                        clean_core = " ".join([w for w in t_lower.split() if w not in generic_suffixes])
+                        
+                        for k, metrics in league_data.items():
+                            k_core = " ".join([w for w in k.split() if w not in generic_suffixes])
+                            if clean_core and (clean_core == k_core or clean_core in k or k_core in t_lower):
+                                rk = metrics.get("rank")
+                                if rk: return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>", int(rk)
+                        return "", 999
+
+                    # --- NHL, NFL, NCAAF (American Mascots) ---
                     mascot = t_lower.split()[-1]
-                    
                     for key, metrics in league_data.items():
                         k_lower = key.lower()
-                        # Matches full name ("san jose sharks"), city, or mascot ("sharks")
-                        if k_lower == t_lower or k_lower in t_lower or t_lower in k_lower or k_lower == mascot:
+                        if k_lower == t_lower or k_lower in t_lower or t_lower in k_lower or (len(mascot) > 3 and k_lower == mascot):
                             rk = metrics.get("net_epa_rank") or metrics.get("rank")
                             if rk and str(rk) not in ["99", "-", ""]:
                                 return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>(#{rk})</span>", int(rk)

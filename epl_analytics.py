@@ -328,8 +328,6 @@ def fetch_epl_xpts_rankings():
             for rank, (name, xpts) in enumerate(team_xpts, 1):
                 clean_name = name.replace('_', ' ')
                 epl_ranks[clean_name] = {"rank": str(rank)}
-                # Store mascot/last word as a safety fallback for schedule matching
-                epl_ranks[clean_name.split()[-1]] = {"rank": str(rank)}
                 
             return epl_ranks
             
