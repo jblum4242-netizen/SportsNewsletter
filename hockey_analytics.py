@@ -12,8 +12,8 @@ MP_MAP = {
     "nashville predators": "NSH", "new jersey devils": "NJD", "new york islanders": "NYI", "new york rangers": "NYR",
     "ottawa senators": "OTT", "philadelphia flyers": "PHI", "pittsburgh penguins": "PIT", "san jose sharks": "SJS",
     "seattle kraken": "SEA", "st. louis blues": "STL", "tampa bay lightning": "TBL", "toronto maple leafs": "TOR",
-    "utah hockey club": "UTA", "vancouver canucks": "VAN", "vegas golden knights": "VGK", "washington capitals": "WSH",
-    "winnipeg jets": "WPG"
+    "utah mammoth": "UTA", "utah hockey club": "UTA", "vancouver canucks": "VAN", "vegas golden knights": "VGK", 
+    "washington capitals": "WSH", "winnipeg jets": "WPG"
 }
 
 def fetch_official_nhl_stats():
@@ -217,11 +217,9 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     return html
 
 def fetch_nhl_power_rankings():
-    """Scrapes live NHL Power Rankings from MoneyPuck.com seamlessly."""
+    """Scrapes live NHL Power Rankings directly from MoneyPuck's raw HTML rows."""
     import re
     import requests
-    import pandas as pd
-    import io
     print("🏒 Fetching NHL Power Rankings from MoneyPuck...")
     url = "https://moneypuck.com/power.htm"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -229,33 +227,37 @@ def fetch_nhl_power_rankings():
     try:
         res = requests.get(url, headers=headers, timeout=10)
         
-        # 1. Broad regex: Replace logo img tags with their raw abbreviations (e.g. "phi")
-        html_text = re.sub(r'<img[^>]+src="[^"]*/([A-Za-z0-9_]+)\.[a-z]{3,4}"[^>]*>', r' \1 ', res.text)
-        dfs = pd.read_html(io.StringIO(html_text))
-        power_df = dfs[0]
-        
-        # 2. Invert MP_MAP to translate abbreviation codes back to full team names
+        # Invert MP_MAP to translate abbreviation codes back to full team names
         code_to_name = {v.upper(): k for k, v in MP_MAP.items()}
-        # Add MoneyPuck's weird 2-letter exceptions
-        code_to_name.update({"LA": "los angeles kings", "TB": "tampa bay lightning", "NJ": "new jersey devils"})
+        # Add 2-letter codes and explicitly handle the 2026 Utah Mammoth rebrand
+        code_to_name.update({
+            "LA": "los angeles kings", 
+            "TB": "tampa bay lightning", 
+            "NJ": "new jersey devils",
+            "UTA": "utah mammoth" 
+        })
+        
+        # 1. Isolate every table row in the HTML
+        rows = re.findall(r'<tr.*?>(.*?)</tr>', res.text, re.IGNORECASE | re.DOTALL)
         
         nhl_ranks = {}
-        for idx, row in power_df.iterrows():
-            rank = str(idx + 1)
-            found_code = None
-            
-            # 3. Search all cells in this row for the team code
-            for cell in row:
-                cell_str = str(cell).strip().upper()
-                if cell_str in code_to_name:
-                    found_code = cell_str
-                    break
-                    
-            if found_code:
-                full_name = code_to_name[found_code]
-                nhl_ranks[full_name] = {"rank": rank}
-                nhl_ranks[full_name.split()[-1]] = {"rank": rank}
+        rank_counter = 1
+        
+        for row in rows:
+            # 2. Look for the first image source inside the row, ignoring the file extension
+            img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', row)
+            if img_match:
+                # Extract filename without extension (e.g., /logos/nhl/MIN.svg -> MIN)
+                code = img_match.group(1).split('/')[-1].split('.')[0].upper()
                 
+                if code in code_to_name:
+                    full_name = code_to_name[code]
+                    if full_name not in nhl_ranks:
+                        nhl_ranks[full_name] = {"rank": str(rank_counter)}
+                        # Store mascot fallback (e.g. "mammoth" or "canadiens")
+                        nhl_ranks[full_name.split()[-1]] = {"rank": str(rank_counter)}
+                        rank_counter += 1
+                        
         return nhl_ranks
     except Exception as e:
         print(f"⚠️ Error fetching NHL Power Rankings: {e}")
