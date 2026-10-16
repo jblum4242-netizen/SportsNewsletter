@@ -27,7 +27,7 @@ import hockey_analytics
 SENDER_EMAIL = "jblum4242@gmail.com"
 SENDER_PASSWORD = "lzygskznkqcejpva"
 
-ODDS_API_KEY = "bd71bd6decf946bca84f130770ad0085"
+ODDS_API_KEY = "c309fe5bbfddf608017dafd09997ee95"
 
 LEAGUE_MAPPING = {
     "NFL": "americanfootball_nfl",
