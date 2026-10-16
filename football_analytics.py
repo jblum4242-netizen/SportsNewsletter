@@ -155,33 +155,40 @@ def fetch_nfl_stats():
 
         for idx, row in nfelo_df.iterrows():
             team_str = str(row[team_col]).lower()
+            # Split into distinct words/tokens so 'car' doesn't false-match 'cardinals'
+            tokens = re.findall(r'[a-z0-9]+', team_str)
 
-            for mascot in stats_map.keys():
-                if mascot in team_str or mascot[:3] in team_str:
-                    stats_map[mascot].update({
-                        "off_total": f"{float(row[off_play_col]):.3f}",
-                        "off_total_rank": f"{int(row['off_tot_rk'])}",
-                        "off_pass": f"{float(row[off_pass_col]):.3f}",
-                        "off_pass_rank": f"{int(row['off_pass_rk'])}",
-                        "off_rush": f"{float(row[off_rush_col]):.3f}",
-                        "off_rush_rank": f"{int(row['off_rush_rk'])}",
-
-                        "def_total": f"{float(row[def_play_col]):.3f}",
-                        "def_total_rank": f"{int(row['def_tot_rk'])}",
-                        "def_pass": f"{float(row[def_pass_col]):.3f}",
-                        "def_pass_rank": f"{int(row['def_pass_rk'])}",
-                        "def_rush": f"{float(row[def_rush_col]):.3f}",
-                        "def_rush_rank": f"{int(row['def_rush_rk'])}",
-
-                        "off_ppg": f"{float(row[ppg_for_col]):.1f}",
-                        "off_ppg_rank": f"{int(row['off_ppg_rk'])}",
-                        "def_ppg": f"{float(row[ppg_against_col]):.1f}",
-                        "def_ppg_rank": f"{int(row['def_ppg_rk'])}",
-
-                        "net_epa": f"{float(row[net_epa_col]):.3f}",
-                        "net_epa_rank": f"{int(row['net_epa_rk'])}"
-                    })
+            matched_mascot = None
+            for abbr, mascot in nfl_mascot_map.items():
+                if mascot in tokens or abbr.lower() in tokens or mascot in team_str:
+                    matched_mascot = mascot
                     break
+
+            if matched_mascot:
+                stats_map[matched_mascot].update({
+                    "off_total": f"{float(row[off_play_col]):.3f}",
+                    "off_total_rank": f"{int(row['off_tot_rk'])}",
+                    "off_pass": f"{float(row[off_pass_col]):.3f}",
+                    "off_pass_rank": f"{int(row['off_pass_rk'])}",
+                    "off_rush": f"{float(row[off_rush_col]):.3f}",
+                    "off_rush_rank": f"{int(row['off_rush_rk'])}",
+
+                    "def_total": f"{float(row[def_play_col]):.3f}",
+                    "def_total_rank": f"{int(row['def_tot_rk'])}",
+                    "def_pass": f"{float(row[def_pass_col]):.3f}",
+                    "def_pass_rank": f"{int(row['def_pass_rk'])}",
+                    "def_rush": f"{float(row[def_rush_col]):.3f}",
+                    "def_rush_rank": f"{int(row['def_rush_rk'])}",
+
+                    "off_ppg": f"{float(row[ppg_for_col]):.1f}",
+                    "off_ppg_rank": f"{int(row['off_ppg_rk'])}",
+                    "def_ppg": f"{float(row[ppg_against_col]):.1f}",
+                    "def_ppg_rank": f"{int(row['def_ppg_rk'])}",
+
+                    "net_epa": f"{float(row[net_epa_col]):.3f}",
+                    "net_epa_rank": f"{int(row['net_epa_rk'])}"
+                })
+                break
 
     except Exception as e:
         print(f"⚠️ Error parsing nfelo HTML overrides: {e}")

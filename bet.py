@@ -1097,16 +1097,20 @@ def format_consensus(consensus_str):
     except: 
         return consensus_str
 
-def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk})"):
+def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="font-size: 10px; color: #64748b; font-weight: 700;"):
     t_lower = team_str.lower().strip()
     league_data = (global_stats or {}).get(lg.upper(), {})
 
-    # --- EPL MATCHING (Avoid suffix collisions like "City" or "United") ---
+    def format_badge(rk):
+        badge_text = fmt.format(rk=rk)
+        return f"<span style='{style}'>{badge_text}</span>" if style else badge_text
+
+    # --- EPL MATCHING ---
     if lg.upper() == "EPL":
         if t_lower in league_data:
             rk = league_data[t_lower].get("rank")
             if rk: 
-                return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>{fmt.format(rk=rk)}</span>", int(rk)
+                return format_badge(rk), int(rk)
         
         generic_suffixes = ["fc", "afc", "city", "united", "town", "hotspur", "wanderers", "albion"]
         clean_core = " ".join([w for w in t_lower.split() if w not in generic_suffixes])
@@ -1116,7 +1120,7 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk})"):
             if clean_core and (clean_core == k_core or clean_core in k or k_core in t_lower):
                 rk = metrics.get("rank")
                 if rk: 
-                    return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>{fmt.format(rk=rk)}</span>", int(rk)
+                    return format_badge(rk), int(rk)
         return "", 999
 
     # --- NHL, NFL, NCAAF (American Mascots) ---
@@ -1126,7 +1130,7 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk})"):
         if k_lower == t_lower or k_lower in t_lower or t_lower in k_lower or (len(mascot) > 3 and k_lower == mascot):
             rk = metrics.get("net_epa_rank") or metrics.get("rank")
             if rk and str(rk) not in ["99", "-", ""]:
-                return f" <span style='font-size: 10px; color: #64748b; font-weight: 700;'>{fmt.format(rk=rk)}</span>", int(rk)
+                return format_badge(rk), int(rk)
     return "", 999
 
 ##Dynamic HTML Block
@@ -1166,10 +1170,10 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
             try:
                 away_raw, home_raw = matchup_text.split(' vs. ')
                 
-                away_badge, away_val = get_league_badge_and_val(away_raw, league_key, global_stats, fmt="(#{rk})")
-                home_badge, home_val = get_league_badge_and_val(home_raw, league_key, global_stats, fmt="(#{rk})")
+                away_badge, away_val = get_league_badge_and_val(away_raw, league_key, global_stats, fmt="(#{rk}) ")
+                home_badge, home_val = get_league_badge_and_val(home_raw, league_key, global_stats, fmt="(#{rk}) ")
                 
-                matchup_text = f"{away_raw}{away_badge} vs. {home_raw}{home_badge}"
+                matchup_text = f"{away_badge}{away_raw} vs. {home_badge}{home_raw}"
 
                 # Marquee thresholds: Top 10 for NFL/NHL, Top 5 for EPL
                 if league_key in ["NFL", "NHL"] and away_val <= 10 and home_val <= 10:
@@ -1483,14 +1487,13 @@ def build_sports_briefings():
         away_team, home_team = game['matchup'].split(' vs. ')
 
         # Inject overall rankings into the card header for NFL, NHL, and EPL
+        # Inject overall rankings BEFORE the team name in the card header
         if league.upper() in ["NFL", "EPL", "NHL"]:
-            # Uses fmt="({rk})" to display "Houston Texans (20) vs. Jacksonville Jaguars (2)"
-            # (Change fmt to "(#{rk})" if you want the '#' symbol included!)
-            away_rk_str, _ = get_league_badge_and_val(away_team, league, global_stats, fmt="({rk})")
-            home_rk_str, _ = get_league_badge_and_val(home_team, league, global_stats, fmt="({rk})")
-            main_title = f"{league}: {away_team}{away_rk_str} vs. {home_team}{home_rk_str}"
+            card_rk_style = "color: #64748b; font-weight: 700; font-size: 14px;"
+            away_rk_str, _ = get_league_badge_and_val(away_team, league, global_stats, fmt="({rk}) ", style=card_rk_style)
+            home_rk_str, _ = get_league_badge_and_val(home_team, league, global_stats, fmt="({rk}) ", style=card_rk_style)
+            main_title = f"{league}: {away_rk_str}{away_team} vs. {home_rk_str}{home_team}"
         else:
-            # NCAAF already has AP Top 25 rankings baked into game['matchup']
             main_title = f"{league}: {game['matchup']}"
 
         # Clean AP poll ranking prefixes like "(1) " so scrapers match cleanly
