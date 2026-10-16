@@ -7,6 +7,7 @@ import urllib.parse
 from bs4 import BeautifulSoup
 import unicodedata
 import json
+import sys
 import os
 import time
 from email.mime.multipart import MIMEMultipart
@@ -77,7 +78,6 @@ def fetch_live_odds_clean(sport_key):
     try:
         res = requests.get(url, params=params, timeout=10)
         
-        # Check quota remaining and the cost of the call in response headers
         remaining = res.headers.get("x-requests-remaining")
         last_cost = res.headers.get("x-requests-last")
         
@@ -90,7 +90,7 @@ def fetch_live_odds_clean(sport_key):
             print(f"⚠️ Odds API Error [{sport_key}]: HTTP {res.status_code} - {res.text}")
     except Exception as e:
         print(f"Odds API Connection Error: {e}")
-    return []
+    return None  # <-- Changed from [] to None so failures aren't cached!
 
 
         
@@ -1345,18 +1345,27 @@ def build_sports_briefings():
     cached_raw_odds = {}
     cache_is_fresh = False
 
-    # 1. Check if we are in a scheduled update window and wipe the cache if so
-    check_and_clear_scheduled_cache(cache_file)
+    # 1. Wipe cache during 7:00 AM / 5:52 PM windows, OR if '--refresh' is passed in terminal
+    import sys
+    if "--refresh" in sys.argv and os.path.exists(cache_file):
+        os.remove(cache_file)
+        print("🔄 [MANUAL REFRESH] '--refresh' flag detected: Cleared raw_odds_cache.json")
+    else:
+        check_and_clear_scheduled_cache(cache_file)
 
-    # 2. Proceed with normal file checking (will be False if wiped above)
+    # 2. Load the cache if it exists, is < 15 hours old, AND has at least one active game across all leagues
     if os.path.exists(cache_file):
         try:
             file_age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
             if file_age_hours < 15:
                 with open(cache_file, 'r') as f:
                     cached_raw_odds = json.load(f)
-                cache_is_fresh = True
-                print(f"📦 [CACHE] Cache file loaded successfully (Age: {file_age_hours:.1f} hrs).")
+                # Ensure the cache isn't a dead/all-empty dictionary from a failed run
+                if any(cached_raw_odds.values()):
+                    cache_is_fresh = True
+                    print(f"📦 [CACHE] Cache file loaded successfully (Age: {file_age_hours:.1f} hrs).")
+                else:
+                    print("⚠️ [CACHE] Cache file was completely empty. Forcing live fetch...")
         except Exception as e:
             print(f"Cache Read Error: {e}")
     
@@ -1370,7 +1379,10 @@ def build_sports_briefings():
         else:
             print(f"🌐 [LIVE] Fetching fresh odds for {league}...")
             raw_odds = fetch_live_odds_clean(api_key)
-            cached_raw_odds[league] = raw_odds
+            if raw_odds is not None:
+                cached_raw_odds[league] = raw_odds
+            else:
+                raw_odds = []  # Fallback to empty list for the rest of the loop, but DO NOT save to cache
         
         # Pre-filtering raw data
         if league.upper() == "NCAAF":
