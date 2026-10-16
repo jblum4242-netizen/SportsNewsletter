@@ -108,19 +108,16 @@ def fetch_nfl_stats():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         res = requests.get(nfelo_url, headers=headers, timeout=10)
 
-        # Regex replacement to extract text from image tags before pandas parses the tables
-        html_text = re.sub(r'<img[^>]+alt="([^"]+)"[^>]*>', r'\1', res.text)
-        html_text = re.sub(r'<img[^>]+src="[^"]*/([A-Za-z0-9_]+)\.[a-z]{3,4}"[^>]*>', r' \1 ', html_text)
-
-        dfs = pd.read_html(io.StringIO(html_text))
+        # Strip out image tags cleanly so 'Bills 4-1' text stays intact
+        dfs = pd.read_html(io.StringIO(res.text))
         nfelo_df = dfs[0]
 
         if isinstance(nfelo_df.columns, pd.MultiIndex):
-            nfelo_df.columns = ['_'.join(col).strip() for col in nfelo_df.columns.values]
+            nfelo_df.columns = ['_'.join(str(part) for part in col).strip() for col in nfelo_df.columns.values]
 
         team_col = [c for c in nfelo_df.columns if 'Team' in c][0]
 
-        # Identify columns
+        # Identify EPA columns
         off_play_col = [c for c in nfelo_df.columns if 'Offensive' in c and 'Play' in c][0]
         off_pass_col = [c for c in nfelo_df.columns if 'Offensive' in c and 'Pass' in c][0]
         off_rush_col = [c for c in nfelo_df.columns if 'Offensive' in c and 'Rush' in c][0]
@@ -129,11 +126,23 @@ def fetch_nfl_stats():
         def_pass_col = [c for c in nfelo_df.columns if 'Defensive' in c and 'Pass' in c][0]
         def_rush_col = [c for c in nfelo_df.columns if 'Defensive' in c and 'Rush' in c][0]
 
-        ppg_for_col = [c for c in nfelo_df.columns if 'For' in c.split('_') or 'For' in c][0]
-        ppg_against_col = [c for c in nfelo_df.columns if 'Against' in c.split('_') or 'Against' in c][0]
+        # Safely identify PPG columns (won't crash if nfelo hides/renames them)
+        ppg_for_col = next((c for c in nfelo_df.columns if 'For' in c.split('_') or 'For' in c), None)
+        ppg_against_col = next((c for c in nfelo_df.columns if 'Against' in c.split('_') or 'Against' in c), None)
 
-        # Identify the Net EPA Play column (the yellow highlighted column)
+        # Identify the Net EPA Play column (far right 'EPA_Play' column)
         net_epa_col = next((c for c in nfelo_df.columns if 'Offensive' not in c and 'Defensive' not in c and 'Play' in c and 'EPA' in c), None)
+
+        # Ensure all numeric columns are converted from '+0.25' strings to floats
+        num_cols = [off_play_col, off_pass_col, off_rush_col, def_play_col, def_pass_col, def_rush_col]
+        if ppg_for_col and ppg_against_col:
+            num_cols.extend([ppg_for_col, ppg_against_col])
+        if net_epa_col:
+            num_cols.append(net_epa_col)
+
+        for col in num_cols:
+            nfelo_df[col] = pd.to_numeric(nfelo_df[col], errors='coerce')
+
         if not net_epa_col:
             nfelo_df['Net_EPA_Play'] = nfelo_df[off_play_col] - nfelo_df[def_play_col]
             net_epa_col = 'Net_EPA_Play'
@@ -147,25 +156,28 @@ def fetch_nfl_stats():
         nfelo_df['def_pass_rk'] = nfelo_df[def_pass_col].rank(ascending=True, method='min')
         nfelo_df['def_rush_rk'] = nfelo_df[def_rush_col].rank(ascending=True, method='min')
 
-        nfelo_df['off_ppg_rk'] = nfelo_df[ppg_for_col].rank(ascending=False, method='min')
-        nfelo_df['def_ppg_rk'] = nfelo_df[ppg_against_col].rank(ascending=True, method='min')
+        if ppg_for_col and ppg_against_col:
+            nfelo_df['off_ppg_rk'] = nfelo_df[ppg_for_col].rank(ascending=False, method='min')
+            nfelo_df['def_ppg_rk'] = nfelo_df[ppg_against_col].rank(ascending=True, method='min')
 
         # Rank Net EPA 1-32 descending
         nfelo_df['net_epa_rk'] = nfelo_df[net_epa_col].rank(ascending=False, method='min')
 
+        matched_count = 0
         for idx, row in nfelo_df.iterrows():
             team_str = str(row[team_col]).lower()
-            # Split into distinct words/tokens so 'car' doesn't false-match 'cardinals'
-            tokens = re.findall(r'[a-z0-9]+', team_str)
 
+            # Match strictly by full mascot name (e.g. 'bills', 'panthers', 'texans', '49ers')
+            # Because nfelo's Team column always contains the full mascot name ("Bills 4-1", "Panthers 2-2")
             matched_mascot = None
-            for abbr, mascot in nfl_mascot_map.items():
-                if mascot in tokens or abbr.lower() in tokens or mascot in team_str:
+            for mascot in stats_map.keys():
+                if mascot in team_str:
                     matched_mascot = mascot
                     break
 
             if matched_mascot:
-                stats_map[matched_mascot].update({
+                matched_count += 1
+                update_dict = {
                     "off_total": f"{float(row[off_play_col]):.3f}",
                     "off_total_rank": f"{int(row['off_tot_rk'])}",
                     "off_pass": f"{float(row[off_pass_col]):.3f}",
@@ -180,18 +192,24 @@ def fetch_nfl_stats():
                     "def_rush": f"{float(row[def_rush_col]):.3f}",
                     "def_rush_rank": f"{int(row['def_rush_rk'])}",
 
-                    "off_ppg": f"{float(row[ppg_for_col]):.1f}",
-                    "off_ppg_rank": f"{int(row['off_ppg_rk'])}",
-                    "def_ppg": f"{float(row[ppg_against_col]):.1f}",
-                    "def_ppg_rank": f"{int(row['def_ppg_rk'])}",
-
                     "net_epa": f"{float(row[net_epa_col]):.3f}",
                     "net_epa_rank": f"{int(row['net_epa_rk'])}"
-                })
-                break
+                }
+                if ppg_for_col and ppg_against_col and pd.notna(row[ppg_for_col]):
+                    update_dict.update({
+                        "off_ppg": f"{float(row[ppg_for_col]):.1f}",
+                        "off_ppg_rank": f"{int(row['off_ppg_rk'])}",
+                        "def_ppg": f"{float(row[ppg_against_col]):.1f}",
+                        "def_ppg_rank": f"{int(row['def_ppg_rk'])}"
+                    })
+                stats_map[matched_mascot].update(update_dict)
+
+        print(f"✅ [NFELO] Successfully matched and updated {matched_count}/32 NFL teams.")
 
     except Exception as e:
+        import traceback
         print(f"⚠️ Error parsing nfelo HTML overrides: {e}")
+        traceback.print_exc()
 
     return stats_map
 
