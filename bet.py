@@ -1697,7 +1697,7 @@ def build_sports_briefings():
         if league.upper() == "MLB":
             league_schedule_games = baseball_news.fetch_mlb_7_day_schedule()
             days_label = "7 Days"
-        elif league.upper() in ["NHL", "NBA"]:
+        elif league.upper() in ["NHL"]:
             # Restrict NHL and NBA to today's date only
             league_schedule_games = [
                 g for g in all_monitored_games 
