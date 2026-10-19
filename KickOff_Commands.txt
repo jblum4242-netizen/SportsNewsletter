@@ -1,1 +1,7 @@
 python C:\Users\jblum\Python\SportsNewsletter\bet.py
+
+python C:\Users\jblum\Python\SportsNewsletter\bet.py --refresh
+
+
+    # --- ENTER YOUR FREE API KEY HERE ---
+    CFBD_API_KEY = "LrFNn3N2V22VOBJ3r6a+dmw4iUsD84uV5YZdSbROZQacDHu1f3h2wbciIHRQzQsy"

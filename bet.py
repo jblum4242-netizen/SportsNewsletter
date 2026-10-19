@@ -24,6 +24,8 @@ import baseball_analytics as baseball_news
 
 import hockey_analytics
 
+import basketball_analytics
+
 # --- PERSONAL DATA CREDENTIALS ---
 SENDER_EMAIL = "jblum4242@gmail.com"
 SENDER_PASSWORD = "lzygskznkqcejpva"
@@ -1166,7 +1168,7 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
                 is_marquee = True
 
         # --- 2. NFL, EPL, NHL RANK INJECTION & MARQUEE CHECK ---
-        elif league_key in ["NFL", "EPL", "NHL"] and ' vs. ' in matchup_text:
+        elif league_key in ["NFL", "EPL", "NHL", "NBA", "NCAAB"] and ' vs. ' in matchup_text:
             try:
                 away_raw, home_raw = matchup_text.split(' vs. ')
                 
@@ -1332,11 +1334,17 @@ def build_sports_briefings():
     nhl_power_ranks = hockey_analytics.fetch_nhl_power_rankings() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
     epl_xpts_ranks = fetch_epl_xpts_rankings() if "EPL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
 
-    # Unified stats dictionary accessible across all schedule renderers
+    print("🏀 Fetching NBA & NCAAB KenPom-style metrics...")
+    nba_stats = basketball_analytics.fetch_all_basketball_stats("NBA")
+    ncaab_stats = basketball_analytics.fetch_all_basketball_stats("NCAAB")
+
+        # Unified stats dictionary accessible across all schedule renderers
     global_stats = {
         "NFL": football_stats.get("NFL", {}),
         "NHL": nhl_power_ranks,
-        "EPL": epl_xpts_ranks
+        "EPL": epl_xpts_ranks,
+        "NBA": nba_stats,
+        "NCAAB": ncaab_stats
     }
 
     eastern_tz = ZoneInfo("America/New_York")
@@ -1486,9 +1494,8 @@ def build_sports_briefings():
         )
         away_team, home_team = game['matchup'].split(' vs. ')
 
-        # Inject overall rankings into the card header for NFL, NHL, and EPL
-        # Inject overall rankings BEFORE the team name in the card header
-        if league.upper() in ["NFL", "EPL", "NHL"]:
+        # Inject overall rankings into the card header for NFL, NHL, EPL, NBA, and NCAAB
+        if league.upper() in ["NFL", "EPL", "NHL", "NBA", "NCAAB"]:
             card_rk_style = "color: #64748b; font-weight: 700; font-size: 14px;"
             away_rk_str, _ = get_league_badge_and_val(away_team, league, global_stats, fmt="({rk}) ", style=card_rk_style)
             home_rk_str, _ = get_league_badge_and_val(home_team, league, global_stats, fmt="({rk}) ", style=card_rk_style)
@@ -1528,6 +1535,9 @@ def build_sports_briefings():
             matchup_stats_html = football_news.build_matchup_stats_html(clean_away, clean_home, league, global_data)
         elif league.upper() == "NHL":
             matchup_stats_html = hockey_analytics.build_nhl_matchup_html(clean_away, clean_home, nhl_official, nhl_advanced)
+        elif league.upper() in ["NBA", "NCAAB"]:
+            matchup_stats_html = basketball_analytics.build_basketball_matchup_html(clean_away, clean_home, league, global_stats.get(league.upper(), {}))
+                
 
         # --- CARD HEADER (TITLE + BROADCAST INFO) ---
         block_html += (
@@ -1706,7 +1716,9 @@ def build_sports_briefings():
         league_links = {
             "NFL": ("https://www.nfeloapp.com/nfl-power-ratings/", "Ratings by nfelo ↗"),
             "EPL": ("https://understat.com/league/EPL", "xPTS by Understat ↗"),
-            "NHL": ("https://moneypuck.com/power.htm", "Rankings by MoneyPuck ↗")
+            "NHL": ("https://moneypuck.com/power.htm", "Rankings by MoneyPuck ↗"),
+            "NBA": ("https://www.basketball-reference.com/leagues/NBA_2027.html", "Four Factors via B-Ref ↗"),
+            "NCAAB": ("https://kenpom.com/", "Ratings & Scouting Report by KenPom ↗")
         }
         link_url, link_text = league_links.get(league.upper(), (None, None))
         
