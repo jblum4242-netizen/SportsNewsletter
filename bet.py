@@ -1806,7 +1806,6 @@ def build_sports_briefings():
                 margin-bottom: 20px;
                 box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
             }}
-
             /* --- CUSTOM CSS TOOLTIPS FOR MOBILE --- */
             .nhl-tooltip {{
                 position: relative;
@@ -1818,12 +1817,12 @@ def build_sports_briefings():
             }}
             .nhl-tooltip .tooltip-text {{
                 visibility: hidden;
-                width: 220px;
+                width: 230px;
                 background-color: #1e293b;
                 color: #ffffff;
                 text-align: left;
-                border-radius: 6px;
-                padding: 10px 12px;
+                border-radius: 8px;
+                padding: 12px 14px;
                 position: absolute;
                 z-index: 999;
                 bottom: 130%;
@@ -1833,22 +1832,41 @@ def build_sports_briefings():
                 transition: opacity 0.2s ease-in-out;
                 font-size: 11px;
                 font-weight: normal;
-                line-height: 1.4;
-                box-shadow: 0 4px 6px -1px rgba(0,0,0,0.15);
-                pointer-events: none;
+                line-height: 1.45;
+                box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+                pointer-events: auto; /* Enables tap events on mobile */
                 white-space: normal;
+                cursor: pointer;
             }}
+            /* Downward pointing triangle */
             .nhl-tooltip .tooltip-text::after {{
                 content: "";
                 position: absolute;
                 top: 100%;
                 left: 50%;
-                margin-left: -5px;
-                border-width: 5px;
+                margin-left: -6px;
+                border-width: 6px;
                 border-style: solid;
                 border-color: #1e293b transparent transparent transparent;
             }}
+            /* Close "X" Button in the upper right */
+            .nhl-tooltip .tooltip-close {{
+                position: absolute;
+                top: 6px;
+                right: 8px;
+                font-size: 11px;
+                font-weight: 700;
+                color: #94a3b8;
+                padding: 2px 5px;
+                line-height: 1;
+                border-radius: 4px;
+            }}
+            .nhl-tooltip .tooltip-close:hover {{
+                color: #ffffff;
+            }}
+            /* Visible on desktop hover OR mobile focus */
             .nhl-tooltip:hover .tooltip-text,
+            .nhl-tooltip:focus-within .tooltip-text,
             .nhl-tooltip:focus .tooltip-text {{
                 visibility: visible;
                 opacity: 1;

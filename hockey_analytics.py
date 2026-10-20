@@ -34,13 +34,20 @@ NHL_TOOLTIPS = {
 
 
 def tooltip(term, display_text=None):
-    """Wraps a hockey metric in a CSS-based tooltip that works on mobile tap."""
+    """Wraps a hockey metric in a CSS-based tooltip with a close button for mobile."""
     definition = NHL_TOOLTIPS.get(term, "")
     label = display_text if display_text is not None else term
     if definition:
         safe_def = html.escape(definition, quote=True)
-        # tabindex="0" forces mobile browsers to register a tap as a focus/hover state
-        return f"<span class='nhl-tooltip' tabindex='0'>{label}<span class='tooltip-text'>{safe_def}</span></span>"
+        # Adding a clickable close badge + blur on tap
+        return (
+            f"<span class='nhl-tooltip' tabindex='0'>"
+            f"{label}"
+            f"<span class='tooltip-text' onclick='this.parentElement.blur(); event.stopPropagation();'>"
+            f"<span class='tooltip-close'>✕</span>"
+            f"{safe_def}"
+            f"</span></span>"
+        )
     return label
 
 
