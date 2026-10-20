@@ -1806,7 +1806,7 @@ def build_sports_briefings():
                 margin-bottom: 20px;
                 box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
             }}
-            /* --- CUSTOM CSS TOOLTIPS FOR MOBILE --- */
+            /* --- CUSTOM CSS TOOLTIPS FOR MOBILE & DESKTOP --- */
             .nhl-tooltip {{
                 position: relative;
                 display: inline-block;
@@ -1816,7 +1816,7 @@ def build_sports_briefings():
                 -webkit-tap-highlight-color: transparent;
             }}
             .nhl-tooltip .tooltip-text {{
-                visibility: hidden;
+                display: none;
                 width: 230px;
                 background-color: #1e293b;
                 color: #ffffff;
@@ -1828,15 +1828,12 @@ def build_sports_briefings():
                 bottom: 130%;
                 left: 50%;
                 transform: translateX(-50%);
-                opacity: 0;
-                transition: opacity 0.2s ease-in-out;
                 font-size: 11px;
                 font-weight: normal;
                 line-height: 1.45;
                 box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
-                pointer-events: auto; /* Enables tap events on mobile */
                 white-space: normal;
-                cursor: pointer;
+                cursor: default;
             }}
             /* Downward pointing triangle */
             .nhl-tooltip .tooltip-text::after {{
@@ -1849,27 +1846,31 @@ def build_sports_briefings():
                 border-style: solid;
                 border-color: #1e293b transparent transparent transparent;
             }}
-            /* Close "X" Button in the upper right */
+            /* Close "X" Button */
             .nhl-tooltip .tooltip-close {{
                 position: absolute;
                 top: 6px;
                 right: 8px;
-                font-size: 11px;
+                font-size: 13px;
                 font-weight: 700;
                 color: #94a3b8;
-                padding: 2px 5px;
+                padding: 4px 6px;
                 line-height: 1;
-                border-radius: 4px;
+                cursor: pointer;
+                -webkit-tap-highlight-color: transparent;
             }}
             .nhl-tooltip .tooltip-close:hover {{
                 color: #ffffff;
             }}
-            /* Visible on desktop hover OR mobile focus */
-            .nhl-tooltip:hover .tooltip-text,
-            .nhl-tooltip:focus-within .tooltip-text,
-            .nhl-tooltip:focus .tooltip-text {{
-                visibility: visible;
-                opacity: 1;
+            /* Desktop hover: active unless explicitly closed */
+            @media (hover: hover) and (pointer: fine) {{
+                .nhl-tooltip:hover:not(.is-closed) .tooltip-text {{
+                    display: block;
+                }}
+            }}
+            /* Mobile tap / active state */
+            .nhl-tooltip.is-active .tooltip-text {{
+                display: block;
             }}
         </style>
     </head>
@@ -1931,6 +1932,29 @@ def build_sports_briefings():
                 
                 window.location.hash = tabName;
             }}
+
+            // --- NHL TOOLTIP HANDLERS ---
+            function toggleTooltip(el, e) {{
+                if (e.target.classList.contains('tooltip-close')) return;
+                el.classList.remove('is-closed');
+                el.classList.toggle('is-active');
+            }}
+
+            function closeTooltip(closeBtn, e) {{
+                e.stopPropagation();
+                const parent = closeBtn.closest('.nhl-tooltip');
+                if (parent) {{
+                    parent.classList.remove('is-active');
+                    parent.classList.add('is-closed');
+                    parent.blur();
+                }}
+            }}
+
+            document.addEventListener('mouseover', (e) => {{
+                if (!e.target.closest('.nhl-tooltip')) {{
+                    document.querySelectorAll('.nhl-tooltip.is-closed').forEach(el => el.classList.remove('is-closed'));
+                }}
+            }});
 
             window.addEventListener('DOMContentLoaded', () => {{
                 let currentHash = window.location.hash.replace('#', '');
