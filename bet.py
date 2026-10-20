@@ -1806,6 +1806,53 @@ def build_sports_briefings():
                 margin-bottom: 20px;
                 box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
             }}
+
+            /* --- CUSTOM CSS TOOLTIPS FOR MOBILE --- */
+            .nhl-tooltip {{
+                position: relative;
+                display: inline-block;
+                cursor: help;
+                border-bottom: 1px dotted #94a3b8;
+                outline: none;
+                -webkit-tap-highlight-color: transparent;
+            }}
+            .nhl-tooltip .tooltip-text {{
+                visibility: hidden;
+                width: 220px;
+                background-color: #1e293b;
+                color: #ffffff;
+                text-align: left;
+                border-radius: 6px;
+                padding: 10px 12px;
+                position: absolute;
+                z-index: 999;
+                bottom: 130%;
+                left: 50%;
+                transform: translateX(-50%);
+                opacity: 0;
+                transition: opacity 0.2s ease-in-out;
+                font-size: 11px;
+                font-weight: normal;
+                line-height: 1.4;
+                box-shadow: 0 4px 6px -1px rgba(0,0,0,0.15);
+                pointer-events: none;
+                white-space: normal;
+            }}
+            .nhl-tooltip .tooltip-text::after {{
+                content: "";
+                position: absolute;
+                top: 100%;
+                left: 50%;
+                margin-left: -5px;
+                border-width: 5px;
+                border-style: solid;
+                border-color: #1e293b transparent transparent transparent;
+            }}
+            .nhl-tooltip:hover .tooltip-text,
+            .nhl-tooltip:focus .tooltip-text {{
+                visibility: visible;
+                opacity: 1;
+            }}
         </style>
     </head>
     <body>

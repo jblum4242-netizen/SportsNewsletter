@@ -34,13 +34,13 @@ NHL_TOOLTIPS = {
 
 
 def tooltip(term, display_text=None):
-    """Wraps a hockey metric in an HTML abbreviation tag with a hover definition."""
+    """Wraps a hockey metric in a CSS-based tooltip that works on mobile tap."""
     definition = NHL_TOOLTIPS.get(term, "")
     label = display_text if display_text is not None else term
     if definition:
-        # html.escape(..., quote=True) converts single quotes (') to &#x27; so titles never truncate
         safe_def = html.escape(definition, quote=True)
-        return f"<abbr title='{safe_def}' style='cursor: help; border-bottom: 1px dotted #94a3b8; text-decoration: none;'>{label}</abbr>"
+        # tabindex="0" forces mobile browsers to register a tap as a focus/hover state
+        return f"<span class='nhl-tooltip' tabindex='0'>{label}<span class='tooltip-text'>{safe_def}</span></span>"
     return label
 
 
