@@ -1177,10 +1177,10 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
                 
                 matchup_text = f"{away_badge}{away_raw} vs. {home_badge}{home_raw}"
 
-                # Marquee thresholds: Top 10 for NFL/NHL, Top 5 for EPL
-                if league_key in ["NFL", "NHL"] and away_val <= 10 and home_val <= 10:
+                # Marquee thresholds: Top 10 for NFL/NHL, Top 25 for NCAAB
+                if league_key in ["NFL", "NHL","NBA","EPL"] and away_val <= 10 and home_val <= 10:
                     is_marquee = True
-                elif league_key == "EPL" and away_val <= 5 and home_val <= 5:
+                elif league_key == "NCAAB" and away_val <= 25 and home_val <= 25:
                     is_marquee = True
 
             except Exception as e:

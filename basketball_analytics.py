@@ -11,6 +11,9 @@ import requests
 # ==========================================
 # CONFIGURATION & TEAM CROSSWALKS
 # ==========================================
+KENPOM_API_KEY = "b6804c0314dde34b6ab248a3b5ea7468ebea43e21972f401c5d3375b39adf44e"
+
+
 NBA_MASCOT_MAP = {
     "hawks": "atlanta hawks", "celtics": "boston celtics", "nets": "brooklyn nets",
     "hornets": "charlotte hornets", "bulls": "chicago bulls", "cavaliers": "cleveland cavaliers",
@@ -38,7 +41,6 @@ NCAAB_ALIASES = {
     "oklahoma state": "oklahoma st.", "mississippi state": "mississippi st.",
     "florida state": "florida st.", "arizona state": "arizona st."
 }
-
 
 def _clean_team_key(name):
     s = str(name).replace("*", "").lower().strip()
@@ -244,127 +246,129 @@ def fetch_nba_stats():
 
 
 # ==========================================
-# 2. NCAAB KENPOM-STYLE METRICS (BartTorvik CSVs)
+# 2. NCAAB METRICS (Official KenPom API)
 # ==========================================
 def fetch_ncaab_stats():
-    """Fetches D-I Adjusted Efficiency, Tempo, Four Factors, and Style Splits from BartTorvik CSVs."""
+    """Fetches official D-I Adjusted Efficiency, Tempo, Four Factors, Misc Stats, and Point Distribution from KenPom API."""
+    headers = {
+        "Authorization": f"Bearer {KENPOM_API_KEY}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
     now = datetime.datetime.now()
     target_season = now.year + 1 if now.month >= 10 else now.year
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
 
     for season in [target_season, target_season - 1]:
-        trank_url = f"https://barttorvik.com/{season}_team_results.csv"
-        ff_url = f"https://barttorvik.com/{season}_fffinal.csv"
-        print(f"🏀 [NCAAB] Fetching T-Rank & Four Factors CSVs for {season}...")
+        print(f"🏀 [NCAAB] Fetching Official KenPom API for {season}...")
+        base_url = "https://kenpom.com/api.php"
 
         try:
-            res_trank = requests.get(trank_url, headers=headers, timeout=15)
-            res_ff = requests.get(ff_url, headers=headers, timeout=15)
-
-            if res_trank.status_code != 200 or len(res_trank.text) < 500:
+            # 1. Ratings (Efficiencies, Tempo, SOS, Possession Length)
+            res_ratings = requests.get(f"{base_url}?endpoint=ratings&y={season}", headers=headers, timeout=15)
+            if res_ratings.status_code != 200:
+                continue
+            ratings_data = res_ratings.json()
+            if not ratings_data:
                 continue
 
-            trank_df = pd.read_csv(io.StringIO(res_trank.text))
-            if len(trank_df) < 100:
-                continue
+            # 2. Four Factors
+            res_ff = requests.get(f"{base_url}?endpoint=four-factors&y={season}", headers=headers, timeout=15)
+            ff_data = {t["TeamName"]: t for t in res_ff.json()} if res_ff.status_code == 200 else {}
 
-            # Identify core T-Rank columns dynamically
-            cols_lower = {c.lower().strip(): c for c in trank_df.columns}
-            team_col = cols_lower.get("team", trank_df.columns[1])
-            rk_col = cols_lower.get("rank", trank_df.columns[0])
-            oe_col = cols_lower.get("adjoe", trank_df.columns[4])
-            oe_rk_col = cols_lower.get("oe rank", trank_df.columns[5])
-            de_col = cols_lower.get("adjde", trank_df.columns[6])
-            de_rk_col = cols_lower.get("de rank", trank_df.columns[7])
-            tempo_col = next((c for k, c in cols_lower.items() if "adjt" in k or "tempo" in k), trank_df.columns[-1])
-            sos_col = next((c for k, c in cols_lower.items() if k in ["sos", "ov_cur_sos", "barthag"]), trank_df.columns[8])
+            # 3. Misc Stats (Shooting Splits, Style Components, Steals, Blocks)
+            res_misc = requests.get(f"{base_url}?endpoint=misc-stats&y={season}", headers=headers, timeout=15)
+            misc_data = {t["TeamName"]: t for t in res_misc.json()} if res_misc.status_code == 200 else {}
 
-            for c in [rk_col, oe_col, oe_rk_col, de_col, de_rk_col, tempo_col, sos_col]:
-                trank_df[c] = pd.to_numeric(trank_df[c], errors="coerce")
-
-            trank_df["tempo_rk"] = trank_df[tempo_col].rank(ascending=False, method="min")
-            trank_df["sos_rk"] = trank_df[sos_col].rank(ascending=False, method="min")
+            # 4. Point Distribution
+            res_pd = requests.get(f"{base_url}?endpoint=pointdist&y={season}", headers=headers, timeout=15)
+            pd_data = {t["TeamName"]: t for t in res_pd.json()} if res_pd.status_code == 200 else {}
 
             stats_map = {}
-            for _, row in trank_df.iterrows():
-                t_name = _clean_team_key(row[team_col])
-                if not t_name or pd.isna(row[oe_col]):
+            for row in ratings_data:
+                team_name = str(row.get("TeamName", "")).strip()
+                t_key = _clean_team_key(team_name)
+                if not t_key:
                     continue
-                net_eff = float(row[oe_col]) - float(row[de_col])
-                stats_map[t_name] = {
-                    "rank": f"{int(row[rk_col])}" if pd.notna(row[rk_col]) else "999",
-                    "net_rtg": f"{net_eff:+.1f}",
-                    "adj_oe": f"{float(row[oe_col]):.1f}", "adj_oe_rk": f"{int(row[oe_rk_col])}" if pd.notna(row[oe_rk_col]) else "-",
-                    "adj_de": f"{float(row[de_col]):.1f}", "adj_de_rk": f"{int(row[de_rk_col])}" if pd.notna(row[de_rk_col]) else "-",
-                    "tempo": f"{float(row[tempo_col]):.1f}" if pd.notna(row[tempo_col]) else "-",
-                    "tempo_rk": f"{int(row['tempo_rk'])}" if pd.notna(row["tempo_rk"]) else "-",
-                    "sos": f"{float(row[sos_col]):.2f}" if pd.notna(row[sos_col]) else "-",
-                    "sos_rk": f"{int(row['sos_rk'])}" if pd.notna(row["sos_rk"]) else "-",
-                    # Default placeholders before merging fffinal.csv
+
+                entry = {
+                    "rank": f"{int(row.get('RankAdjEM', 999))}",
+                    "net_rtg": f"{row.get('AdjEM', 0.0):+.2f}",
+                    "adj_oe": f"{row.get('AdjOE', 0.0):.1f}", "adj_oe_rk": f"{int(row.get('RankAdjOE', 0))}",
+                    "adj_de": f"{row.get('AdjDE', 0.0):.1f}", "adj_de_rk": f"{int(row.get('RankAdjDE', 0))}",
+                    "tempo": f"{row.get('AdjTempo', 0.0):.1f}", "tempo_rk": f"{int(row.get('RankAdjTempo', 0))}",
+                    "sos": f"{row.get('SOS', 0.0):+.2f}", "sos_rk": f"{int(row.get('RankSOS', 0))}",
+                    "apl_off": f"{row.get('APL_Off', 0.0):.1f}", "apl_off_rk": f"{int(row.get('RankAPL_Off', 0))}",
+                    "apl_def": f"{row.get('APL_Def', 0.0):.1f}", "apl_def_rk": f"{int(row.get('RankAPL_Def', 0))}",
+                    
                     "off_efg": "-", "off_efg_rk": "-", "def_efg": "-", "def_efg_rk": "-",
                     "off_tov": "-", "off_tov_rk": "-", "def_tov": "-", "def_tov_rk": "-",
                     "off_orb": "-", "off_orb_rk": "-", "def_orb": "-", "def_orb_rk": "-",
                     "off_ftr": "-", "off_ftr_rk": "-", "def_ftr": "-", "def_ftr_rk": "-",
+                    
                     "off_3p": "-", "off_3p_rk": "-", "def_3p": "-", "def_3p_rk": "-",
                     "off_2p": "-", "off_2p_rk": "-", "def_2p": "-", "def_2p_rk": "-",
                     "off_ft": "-", "off_ft_rk": "-", "def_ft": "-", "def_ft_rk": "-",
+                    
                     "off_3par": "-", "off_3par_rk": "-", "def_3par": "-", "def_3par_rk": "-",
                     "off_afgm": "-", "off_afgm_rk": "-", "def_afgm": "-", "def_afgm_rk": "-",
+                    "off_blk": "-", "off_blk_rk": "-", "def_blk": "-", "def_blk_rk": "-",
+                    "off_stl": "-", "off_stl_rk": "-", "def_stl": "-", "def_stl_rk": "-",
+                    "off_nst": "-", "off_nst_rk": "-", "def_nst": "-", "def_nst_rk": "-",
+                    
+                    "off_pd_ft": "-", "off_pd_2p": "-", "off_pd_3p": "-"
                 }
 
-            # Merge Four Factors & Shooting Splits from {year}_fffinal.csv
-            if res_ff.status_code == 200 and len(res_ff.text) > 500:
-                ff_df = pd.read_csv(io.StringIO(res_ff.text))
-                # fffinal.csv pairs each stat column with its national rank column immediately after it:
-                # 0:TeamName, 1:eFG%, 2:rk, 3:eFG% Def, 4:rk, 5:FTR, 6:rk, 7:FTR Def, 8:rk,
-                # 9:OR%, 10:rk, 11:DR%, 12:rk, 13:TO%, 14:rk, 15:TO% Def, 16:rk,
-                # 17:3P%, 18:rk, 19:3pD%, 20:rk, 21:2p%, 22:rk, 23:2pD%, 24:rk,
-                # 25:FT%, 26:rk, 27:FT% Def, 28:rk, 29:3P rate, 30:rk, 31:3P rate D, 32:rk,
-                # 33:arate, 34:rk, 35:arate D, 36:rk
-                if ff_df.shape[1] >= 35:
-                    for _, frow in ff_df.iterrows():
-                        ft_name = _clean_team_key(frow.iloc[0])
-                        if ft_name in stats_map:
-                            def _v(idx):
-                                val = pd.to_numeric(frow.iloc[idx], errors="coerce")
-                                return f"{val:.1f}" if pd.notna(val) else "-"
-                            def _r(idx):
-                                rk = pd.to_numeric(frow.iloc[idx], errors="coerce")
-                                return f"{int(rk)}" if pd.notna(rk) else "-"
+                if team_name in ff_data:
+                    ff = ff_data[team_name]
+                    entry.update({
+                        "off_efg": f"{ff.get('eFG_Pct', 0):.1f}", "off_efg_rk": f"{ff.get('RankeFG_Pct', '-')}",
+                        "def_efg": f"{ff.get('DeFG_Pct', 0):.1f}", "def_efg_rk": f"{ff.get('RankDeFG_Pct', '-')}",
+                        "off_tov": f"{ff.get('TO_Pct', 0):.1f}", "off_tov_rk": f"{ff.get('RankTO_Pct', '-')}",
+                        "def_tov": f"{ff.get('DTO_Pct', 0):.1f}", "def_tov_rk": f"{ff.get('RankDTO_Pct', '-')}",
+                        "off_orb": f"{ff.get('OR_Pct', 0):.1f}", "off_orb_rk": f"{ff.get('RankOR_Pct', '-')}",
+                        "def_orb": f"{ff.get('DOR_Pct', 0):.1f}", "def_orb_rk": f"{ff.get('RankDOR_Pct', '-')}",
+                        "off_ftr": f"{ff.get('FT_Rate', 0):.1f}", "off_ftr_rk": f"{ff.get('RankFT_Rate', '-')}",
+                        "def_ftr": f"{ff.get('DFT_Rate', 0):.1f}", "def_ftr_rk": f"{ff.get('RankDFT_Rate', '-')}"
+                    })
 
-                            # Convert Defensive Rebound % (col 11) to Opp ORB% Allowed (100 - DR%) for KenPom parity
-                            drb_val = pd.to_numeric(frow.iloc[11], errors="coerce")
-                            opp_orb_str = f"{(100.0 - drb_val):.1f}" if pd.notna(drb_val) else "-"
+                if team_name in misc_data:
+                    mc = misc_data[team_name]
+                    entry.update({
+                        "off_3p": f"{mc.get('FG3Pct', 0):.1f}", "off_3p_rk": f"{mc.get('RankFG3Pct', '-')}",
+                        "def_3p": f"{mc.get('OppFG3Pct', 0):.1f}", "def_3p_rk": f"{mc.get('RankOppFG3Pct', '-')}",
+                        "off_2p": f"{mc.get('FG2Pct', 0):.1f}", "off_2p_rk": f"{mc.get('RankFG2Pct', '-')}",
+                        "def_2p": f"{mc.get('OppFG2Pct', 0):.1f}", "def_2p_rk": f"{mc.get('RankOppFG2Pct', '-')}",
+                        "off_ft": f"{mc.get('FTPct', 0):.1f}", "off_ft_rk": f"{mc.get('RankFTPct', '-')}",
+                        "def_ft": f"{mc.get('OppFTPct', 0):.1f}", "def_ft_rk": f"{mc.get('RankOppFTPct', '-')}",
+                        "off_3par": f"{mc.get('F3GRate', 0):.1f}", "off_3par_rk": f"{mc.get('RankF3GRate', '-')}",
+                        "def_3par": f"{mc.get('OppF3GRate', 0):.1f}", "def_3par_rk": f"{mc.get('RankOppF3GRate', '-')}",
+                        "off_afgm": f"{mc.get('ARate', 0):.1f}", "off_afgm_rk": f"{mc.get('RankARate', '-')}",
+                        "def_afgm": f"{mc.get('OppARate', 0):.1f}", "def_afgm_rk": f"{mc.get('RankOppARate', '-')}",
+                        "off_blk": f"{mc.get('BlockPct', 0):.1f}", "off_blk_rk": f"{mc.get('RankBlockPct', '-')}",
+                        "def_blk": f"{mc.get('OppBlockPct', 0):.1f}", "def_blk_rk": f"{mc.get('RankOppBlockPct', '-')}",
+                        "off_stl": f"{mc.get('StlRate', 0):.1f}", "off_stl_rk": f"{mc.get('RankStlRate', '-')}",
+                        "def_stl": f"{mc.get('OppStlRate', 0):.1f}", "def_stl_rk": f"{mc.get('RankOppStlRate', '-')}",
+                        "off_nst": f"{mc.get('NSTRate', 0):.1f}", "off_nst_rk": f"{mc.get('RankNSTRate', '-')}",
+                        "def_nst": f"{mc.get('OppNSTRate', 0):.1f}", "def_nst_rk": f"{mc.get('RankOppNSTRate', '-')}"
+                    })
 
-                            stats_map[ft_name].update({
-                                "off_efg": _v(1), "off_efg_rk": _r(2),
-                                "def_efg": _v(3), "def_efg_rk": _r(4),
-                                "off_ftr": _v(5), "off_ftr_rk": _r(6),
-                                "def_ftr": _v(7), "def_ftr_rk": _r(8),
-                                "off_orb": _v(9), "off_orb_rk": _r(10),
-                                "def_orb": opp_orb_str, "def_orb_rk": _r(12),
-                                "off_tov": _v(13), "off_tov_rk": _r(14),
-                                "def_tov": _v(15), "def_tov_rk": _r(16),
-                                "off_3p": _v(17), "off_3p_rk": _r(18),
-                                "def_3p": _v(19), "def_3p_rk": _r(20),
-                                "off_2p": _v(21), "off_2p_rk": _r(22),
-                                "def_2p": _v(23), "def_2p_rk": _r(24),
-                                "off_ft": _v(25), "off_ft_rk": _r(26),
-                                "def_ft": _v(27), "def_ft_rk": _r(28),
-                                "off_3par": _v(29), "off_3par_rk": _r(30),
-                                "def_3par": _v(31), "def_3par_rk": _r(32),
-                                "off_afgm": _v(33), "off_afgm_rk": _r(34),
-                                "def_afgm": _v(35), "def_afgm_rk": _r(36),
-                            })
+                if team_name in pd_data:
+                    pd_row = pd_data[team_name]
+                    entry.update({
+                        "off_pd_ft": f"{pd_row.get('OffFt', 0):.1f}",
+                        "off_pd_2p": f"{pd_row.get('OffFg2', 0):.1f}",
+                        "off_pd_3p": f"{pd_row.get('OffFg3', 0):.1f}"
+                    })
 
-            print(f"✅ [NCAAB] Successfully parsed {len(stats_map)} D-I teams (Season {season}).")
+                stats_map[t_key] = entry
+
+            print(f"✅ [NCAAB] Successfully parsed {len(stats_map)} D-I teams from KenPom API (Season {season}).")
             return stats_map
 
         except Exception as e:
-            print(f"⚠️ [NCAAB] Error fetching BartTorvik CSVs for {season}: {e}")
+            print(f"⚠️ [NCAAB] Error fetching KenPom API for {season}: {e}")
 
     return {}
-
 
 # ==========================================
 # 3. DAILY CACHE ROUTER
