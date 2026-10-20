@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import requests
 import io
+import html
 
 # --- TOP-LEVEL MODULE MAP ---
 MP_MAP = {
@@ -15,6 +16,33 @@ MP_MAP = {
     "utah mammoth": "UTA", "utah hockey club": "UTA", "vancouver canucks": "VAN", "vegas golden knights": "VGK", 
     "washington capitals": "WSH", "winnipeg jets": "WPG"
 }
+
+NHL_TOOLTIPS = {
+    "CF%": "Corsi For Percentage: The share of total shot attempts (shots on net, misses, and blocked shots). Used to measure overall puck possession.",
+    "xGF": "Expected Goals For: The total estimated goals a team should score based on the location, angle, and type of unblocked shot attempts.",
+    "xGA": "Expected Goals Against: The estimated number of goals a team should have allowed based on the opponent's shot quality.",
+    "xGF%": "Expected Goals For Percentage: The share of expected goals generated versus allowed. Weighs shot quality, not just quantity. Above 50% means the team out-chances the opponent.",
+    "HD_xGF%": "High Danger Expected Goals For Percentage: The share of expected goals generated versus allowed, strictly from high-danger scoring chances.",
+    "HDCF": "High Danger Chances For: Unblocked shot attempts with a high probability (>= 20%) of being a goal, typically originating from the slot or crease.",
+    "HDCA": "High Danger Chances Against: High-quality scoring opportunities given up to the opponent from dangerous areas.",
+    "GSAx": "Goals Saved Above Expected: How many goals a goaltender prevented compared to a league-average goalie facing the exact same shot quality.",
+    "PDO": "PDO (SPSV%): A proxy for 'puck luck' calculated by adding a team's 5v5 shooting percentage and save percentage. 100 (or 1.000) is average; significantly higher indicates luck or elite finishing/goaltending, while lower suggests bad luck.",
+    "Save%_Above_x": "Save Percentage Above Expected: The difference between a team's actual save percentage and their expected save percentage based on the shot quality faced.",
+    "SF/60": "Shots For Per 60 Minutes: The rate of unblocked shots on goal a team generates per 60 minutes of 5v5 play.",
+    "SA/60": "Shots Against Per 60 Minutes: The rate of unblocked shots on goal a team allows per 60 minutes of 5v5 play."
+}
+
+
+def tooltip(term, display_text=None):
+    """Wraps a hockey metric in an HTML abbreviation tag with a hover definition."""
+    definition = NHL_TOOLTIPS.get(term, "")
+    label = display_text if display_text is not None else term
+    if definition:
+        # html.escape(..., quote=True) converts single quotes (') to &#x27; so titles never truncate
+        safe_def = html.escape(definition, quote=True)
+        return f"<abbr title='{safe_def}' style='cursor: help; border-bottom: 1px dotted #94a3b8; text-decoration: none;'>{label}</abbr>"
+    return label
+
 
 def fetch_official_nhl_stats():
     """Fetches official team stats directly from the NHL APIs (Standings + Special Teams)."""
@@ -205,13 +233,13 @@ def build_nhl_matchup_html(away_team, home_team, official_stats, mp_stats):
     html += row("Goal Differential (API)", a_off.get('goal_diff', '-'), h_off.get('goal_diff', '-'), True)
     html += row("Power Play (API)", a_off.get('pp_pct', '-'), h_off.get('pp_pct', '-'), True, True)
     html += row("Penalty Kill (API)", a_off.get('pk_pct', '-'), h_off.get('pk_pct', '-'), True, True)
-    html += row("PDO (MP)", a_mp.get('PDO', '-'), h_mp.get('PDO', '-'), True)
-    html += row("Save % Above Expected (MP)", a_mp.get('Save%_Above_x', '-'), h_mp.get('Save%_Above_x', '-'), True, True)
-    html += row("High Danger xGF% (MP)", a_mp.get('HD_xGF%', '-'), h_mp.get('HD_xGF%', '-'), True, True)
-    html += row("5v5 Expected Goals (MP)", a_mp.get('xGF%', '-'), h_mp.get('xGF%', '-'), True, True)
-    html += row("5v5 Corsi (MP)", a_mp.get('CF%', '-'), h_mp.get('CF%', '-'), True, True)
-    html += row("Shots For / 60 (MP)", a_mp.get('SF/60', '-'), h_mp.get('SF/60', '-'), True)
-    html += row("Shots Against / 60 (MP)", a_mp.get('SA/60', '-'), h_mp.get('SA/60', '-'), False)
+    html += row(f"{tooltip('PDO')} (MP)", a_mp.get('PDO', '-'), h_mp.get('PDO', '-'), True)
+    html += row(f"{tooltip('Save%_Above_x', 'Save % Above Expected')} (MP)", a_mp.get('Save%_Above_x', '-'), h_mp.get('Save%_Above_x', '-'), True, True)
+    html += row(f"{tooltip('HD_xGF%', 'High Danger xGF%')} (MP)", a_mp.get('HD_xGF%', '-'), h_mp.get('HD_xGF%', '-'), True, True)
+    html += row(f"{tooltip('xGF%', '5v5 Expected Goals')} (MP)", a_mp.get('xGF%', '-'), h_mp.get('xGF%', '-'), True, True)
+    html += row(f"{tooltip('CF%', '5v5 Corsi')} (MP)", a_mp.get('CF%', '-'), h_mp.get('CF%', '-'), True, True)
+    html += row(f"{tooltip('SF/60', 'Shots For / 60')} (MP)", a_mp.get('SF/60', '-'), h_mp.get('SF/60', '-'), True)
+    html += row(f"{tooltip('SA/60', 'Shots Against / 60')} (MP)", a_mp.get('SA/60', '-'), h_mp.get('SA/60', '-'), False)
 
     html += "</table>"
     return html
@@ -284,7 +312,51 @@ def fetch_nhl_power_rankings():
         return {}
 
 if __name__ == '__main__':
-    ranks = fetch_nhl_power_rankings()
-    print(f"\n--- Found {len(ranks)} rank entries ---")
-    for team, data in list(ranks.items())[:10]:
-        print(f"{team:<25} -> #{data.get('rank')}")
+    print("🏒 Testing NHL Tooltips & Matchup Table Generation...")
+    
+    # 1. Fetch live metrics
+    off_stats = fetch_official_nhl_stats()
+    mp_stats = fetch_moneypuck_stats()
+    
+    # 2. Build sample matchup HTML
+    sample_matchup_html = build_nhl_matchup_html("Philadelphia Flyers", "Colorado Avalanche", off_stats, mp_stats)
+    
+    # 3. Wrap in a clean HTML shell for browser preview
+    full_preview = f"""<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>NHL Tooltip Test</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                background-color: #f8fafc;
+                padding: 40px;
+                display: flex;
+                justify-content: center;
+            }}
+            .card {{
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 20px;
+                max-width: 650px;
+                width: 100%;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h3 style="margin-top: 0; color: #1e293b;">🏒 NHL Matchup Preview</h3>
+            {sample_matchup_html}
+        </div>
+    </body>
+    </html>"""
+    
+    # 4. Save to test file
+    test_file = "test_nhl.html"
+    with open(test_file, "w", encoding="utf-8") as f:
+        f.write(full_preview)
+        
+    print(f"✅ Generated '{test_file}'! Double-click it or open it in your browser to test the hover tooltips.")
