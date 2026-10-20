@@ -1766,6 +1766,15 @@ def build_sports_briefings():
                 margin-bottom: 20px;
                 white-space: nowrap;
             }}
+            
+            /* NEW: Allow buttons to wrap into neat rows on computer screens */
+            @media (min-width: 768px) {{
+                .tab-nav {{
+                    flex-wrap: wrap;
+                    white-space: normal;
+                    overflow-x: visible;
+                }}
+            }}
             .tab-btn {{
                 background-color: #ffffff;
                 border: 1px solid #e2e8f0;
