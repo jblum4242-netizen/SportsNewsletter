@@ -1480,8 +1480,8 @@ def build_sports_briefings():
                 "live_feed": live_feed
             })
 
-    # Filter Today's Games
-    today_games = [g for g in all_monitored_games if g['game_datetime'].date() == today_date]
+    # Filter Today's Games (Excluding NHL to reduce noise)
+    today_games = [g for g in all_monitored_games if g['game_datetime'].date() == today_date and g['league'].upper() != "NHL"]
     today_table_html = render_calendar_table(today_games, show_league_badge=True, global_stats=global_stats)
 
 # ---------------------------------------------------------
