@@ -440,6 +440,11 @@ def _lookup_team_stats(team_name, league, global_stats):
     for i in range(len(words) - 1, 0, -1):
         candidate = " ".join(words[:i])
         candidate_st = candidate.replace("state", "st.")
+        
+        # Anti-greedy safety check: Don't let a "State/St/Tech" school match a base school
+        if (" st" in t_clean or " state" in t_clean or " tech" in t_clean) and (" st" not in candidate and " state" not in candidate and " tech" not in candidate):
+            continue
+            
         if candidate in global_stats:
             return global_stats[candidate]
         if candidate_st in global_stats:

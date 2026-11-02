@@ -543,12 +543,13 @@ def fetch_phillies_7_day_schedule():
         
     return schedule_list
 
-def filter_ncaaf_games(odds_games):
-    """Filters NCAAF games to Top 25 teams, Power 4 Head-to-Heads, and Delaware."""
+def filter_college_games(odds_games, league):
+    """Filters NCAAF and NCAAB games to Top 25 teams, Power Conference Head-to-Heads, and Delaware."""
     import requests
     
     # 1. Fetch the actual AP Top 25 Rankings directly from ESPN
-    rankings_url = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
+    espn_sport = "basketball/mens-college-basketball" if league.upper() == "NCAAB" else "football/college-football"
+    rankings_url = f"http://site.api.espn.com/apis/site/v2/sports/{espn_sport}/rankings"
     top_25_teams = {}
     
     try:
@@ -563,18 +564,16 @@ def filter_ncaaf_games(odds_games):
                     loc = team.get('location', '')
                     mascot = team.get('name', '')
                     
-                    # Manually construct the full name (e.g., "georgia bulldogs") 
-                    # since displayName is not provided in the rankings JSON
                     if loc and mascot:
                         full_name = f"{loc} {mascot}".strip().lower()
                         top_25_teams[full_name] = current_rank
                         
                 break 
     except Exception as e:
-        print(f"⚠️ Could not fetch Top 25 CFB rankings: {e}")
+        print(f"⚠️ Could not fetch Top 25 {league} rankings: {e}")
 
-    # 2. Hardcode the Power 4 + Notre Dame to catch all major intra-conference clashes
-    power_4 = {
+    # 2. Hardcode the Power Conferences to catch all major intra-conference clashes
+    power_teams = {
         "alabama", "arkansas", "auburn", "florida", "georgia", "kentucky", "lsu", "mississippi state", 
         "missouri", "oklahoma", "ole miss", "south carolina", "tennessee", "texas", "texas a&m", "vanderbilt",
         "illinois", "indiana", "iowa", "maryland", "michigan", "michigan state", "minnesota", "nebraska", 
@@ -585,6 +584,11 @@ def filter_ncaaf_games(odds_games):
         "nc state", "north carolina", "pittsburgh", "smu", "stanford", "syracuse", "virginia", "virginia tech", "wake forest",
         "notre dame"
     }
+
+    if league.upper() == "NCAAB":
+        power_teams.update({
+            "butler", "uconn", "connecticut", "creighton", "depaul", "georgetown", "marquette", "providence", "st. john's", "seton hall", "villanova", "xavier"
+        })
 
     filtered_games = []
     
@@ -598,14 +602,21 @@ def filter_ncaaf_games(odds_games):
         away_rank_str = ""
         home_rank_str = ""
         for t_name, t_rank in top_25_teams.items():
+            # Anti-greedy check so "Tennessee St" doesn't get ranked as "Tennessee"
             if t_name in away and not away_rank_str:
-                away_rank_str = f"({t_rank}) "
+                if (" st" in away or " state" in away or " tech" in away) and (" st" not in t_name and " state" not in t_name and " tech" not in t_name):
+                    pass
+                else:
+                    away_rank_str = f"({t_rank}) "
+                    
             if t_name in home and not home_rank_str:
-                home_rank_str = f"({t_rank}) "
+                 if (" st" in home or " state" in home or " tech" in home) and (" st" not in t_name and " state" not in t_name and " tech" not in t_name):
+                    pass
+                 else:
+                    home_rank_str = f"({t_rank}) "
 
         game['away_rank'] = away_rank_str
         game['home_rank'] = home_rank_str
-        # -------------------------------------------------------------
             
         # Rule 1: Always include Delaware
         if "delaware" in away or "delaware" in home:
@@ -613,16 +624,23 @@ def filter_ncaaf_games(odds_games):
             continue
             
         # Rule 2: Does the game involve a Top 25 team?
-        is_top_25 = bool(away_rank_str or home_rank_str)
-        if is_top_25:
+        if bool(away_rank_str or home_rank_str):
             filtered_games.append(game)
             continue
             
-        # Rule 3: Are BOTH teams in the Power 4? (Head-to-Head requirement)
-        away_is_p4 = any(p4 in away for p4 in power_4)
-        home_is_p4 = any(p4 in home for p4 in power_4)
+        # Rule 3: Are BOTH teams in the Power Conferences?
+        away_is_power = any(p in away for p in power_teams)
+        home_is_power = any(p in home for p in power_teams)
         
-        if away_is_p4 and home_is_p4:
+        # Anti-greedy check for the Power Conference matchups
+        if away_is_power:
+             if (" st" in away or " state" in away or " tech" in away) and not any(p in away for p in power_teams if " st" in p or " state" in p or " tech" in p):
+                 away_is_power = False
+        if home_is_power:
+             if (" st" in home or " state" in home or " tech" in home) and not any(p in home for p in power_teams if " st" in p or " state" in p or " tech" in p):
+                 home_is_power = False
+        
+        if away_is_power and home_is_power:
             filtered_games.append(game)
             
     return filtered_games
@@ -1125,10 +1143,15 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
                     return format_badge(rk), int(rk)
         return "", 999
 
-    # --- NHL, NFL, NCAAF (American Mascots) ---
+    # --- NHL, NFL, NCAAF, NCAAB (American Mascots) ---
     mascot = t_lower.split()[-1]
     for key, metrics in league_data.items():
         k_lower = key.lower()
+        
+        # Anti-greedy check for college rankings
+        if (" st" in t_lower or " state" in t_lower or " tech" in t_lower) and (" st" not in k_lower and " state" not in k_lower and " tech" not in k_lower):
+            continue
+            
         if k_lower == t_lower or k_lower in t_lower or t_lower in k_lower or (len(mascot) > 3 and k_lower == mascot):
             rk = metrics.get("net_epa_rank") or metrics.get("rank")
             if rk and str(rk) not in ["99", "-", ""]:
@@ -1397,12 +1420,8 @@ def build_sports_briefings():
                 raw_odds = []  # Fallback to empty list for the rest of the loop, but DO NOT save to cache
         
         # Pre-filtering raw data
-        if league.upper() == "NCAAF":
-            raw_odds = filter_ncaaf_games(raw_odds)
-        elif league.upper() == "NCAAB":
-            valid_schools = [s.upper() for s in POWER_CONFERENCE_SCHOOLS] + [s.upper() for s in BIG_EAST_HOOPS]
-            raw_odds = [g for g in raw_odds if any(s in g.get('away_team', '').upper() or s in g.get('home_team', '').upper() for s in valid_schools)]
-
+        if league.upper() in ["NCAAF", "NCAAB"]:
+            raw_odds = filter_college_games(raw_odds, league)
         su_data = fetch_espn_records(league)
         ats_data = fetch_ats_records(league)
         parsed_games = parse_game_metrics(raw_odds, covers_data, tv_data, su_data, ats_data, league)
