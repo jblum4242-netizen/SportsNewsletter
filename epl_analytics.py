@@ -1,337 +1,320 @@
+import datetime
+import json
+import os
+import sys
+from zoneinfo import ZoneInfo
 import requests
 import pandas as pd
-from understatapi import UnderstatClient
-from datetime import datetime
+
+# In-memory session caches so we never hit the network twice in one run
+_EPL_LEAGUE_CACHE = None
+_FPL_BOOTSTRAP_CACHE = None
 
 def format_understat_name(name):
-    """Cleans and maps EPL team names to match Understat's exact database slugs."""
+    """Maps FanDuel/Odds API EPL team names to Understat's exact team titles."""
     name_map = {
-        "Manchester United": "Manchester_United",
-        "Manchester City": "Manchester_City",
-        "Crystal Palace": "Crystal_Palace",
-        "West Ham United": "West_Ham",
+        "Manchester United": "Manchester United",
+        "Manchester City": "Manchester City",
+        "Crystal Palace": "Crystal Palace",
+        "West Ham United": "West Ham",
         "Leeds United": "Leeds",
         "Brighton and Hove Albion": "Brighton",
-        "Wolverhampton Wanderers": "Wolverhampton",
+        "Wolverhampton Wanderers": "Wolverhampton Wanderers",
         "Tottenham Hotspur": "Tottenham",
-        "Nottingham Forest": "Nottingham_Forest",
-        "Newcastle United": "Newcastle_United",
-        "Newcastle Utd": "Newcastle_United",
-        "Newcastle": "Newcastle_United",
-        "Hull City": "Hull",
-        "Coventry City": "Coventry",
+        "Nottingham Forest": "Nottingham Forest",
+        "Newcastle United": "Newcastle United",
+        "Newcastle Utd": "Newcastle United",
+        "Newcastle": "Newcastle United",
         "Ipswich Town": "Ipswich",
         "Leicester City": "Leicester",
         "Luton Town": "Luton",
-        "Cardiff City": "Cardiff",
-        "Swansea City": "Swansea"
     }
-    
     if name in name_map:
         return name_map[name]
-        
-    clean_name = name.replace(" Hotspur", "").replace(" FC", "").replace("AFC ", "")
-    return clean_name.strip().replace(" ", "_")
-
-def fetch_epl_xg_form(team_name):
-    search_name = format_understat_name(team_name)
-    display_name = search_name.replace("_", " ")
-    
-    current_year = str(datetime.now().year)
-    previous_year = str(int(current_year) - 1)
-    
-    try:
-        with UnderstatClient() as understat:
-            for season in [current_year, previous_year]:
-                try:
-                    raw_data = understat.team(team=search_name).get_match_data(season=season)
-                    
-                    if not raw_data:
-                        continue
-                        
-                    df = pd.DataFrame(raw_data)
-                    
-                    if 'isResult' in df.columns:
-                        completed = df[df['isResult'] == True].copy()
-                    else:
-                        completed = df.copy()
-                        
-                    if not completed.empty:
-                        # Grab last 5 and reverse so the most recent match is at the top
-                        last_5 = completed.tail(5).iloc[::-1]
-                        team_results = []
-                        
-                        for _, match in last_5.iterrows():
-                            h_team = match['h']['title']
-                            a_team = match['a']['title']
-                            is_home = display_name.lower() in h_team.lower()
-                            
-                            goals = match['goals']
-                            xg_data = match['xG']
-                            
-                            raw_date = match.get('datetime', '')
-                            try:
-                                date_obj = datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S")
-                                formatted_date = date_obj.strftime("%b %d")
-                            except ValueError:
-                                formatted_date = raw_date[:10]
-                            
-                            if is_home:
-                                opponent = a_team
-                                venue = "H"
-                                scored = int(goals['h'])
-                                conceded = int(goals['a'])
-                                xG = float(xg_data['h'])
-                                xGA = float(xg_data['a'])
-                            else:
-                                opponent = h_team
-                                venue = "A"
-                                scored = int(goals['a'])
-                                conceded = int(goals['h'])
-                                xG = float(xg_data['a'])
-                                xGA = float(xg_data['h'])
-                                
-                            if scored > conceded:
-                                result = "W"
-                            elif scored < conceded:
-                                result = "L"
-                            else:
-                                result = "D"
-                                
-                            team_results.append({
-                                'date': formatted_date,
-                                'venue': venue,
-                                'opponent': opponent,
-                                'result': result,
-                                'scored': scored,
-                                'missed': conceded,
-                                'xG': xG,
-                                'xGA': xGA
-                            })
-                            
-                        return team_results
-                        
-                except Exception:
-                    continue
-                    
-        return []
-        
-    except Exception:
-        return []
+    return name.replace(" Hotspur", "").replace(" FC", "").replace("AFC ", "").strip()
 
 
-def fetch_epl_head_to_head(team_a, team_b):
-    """Finds the last 2 head-to-head matches between team_a and team_b quietly."""
-    search_a = format_understat_name(team_a)
-    search_b = format_understat_name(team_b)
-    
-    current_year = str(datetime.now().year)
-    previous_year = str(int(current_year) - 1)
-    
-    try:
-        with UnderstatClient() as understat:
-            raw_data = understat.team(team=search_a).get_match_data(season=current_year)
-            if not raw_data:
-                raw_data = understat.team(team=search_a).get_match_data(season=previous_year)
-                
-            if not raw_data:
-                return []
-                
-            df = pd.DataFrame(raw_data)
-            completed = df[df['isResult'] == True].copy() if 'isResult' in df.columns else df.copy()
-            
-            h2h_matches = []
-            
-            for _, match in completed.iloc[::-1].iterrows():
-                h_team = match['h']['title'].lower()
-                a_team = match['a']['title'].lower()
-                
-                if search_b.lower().replace("_", " ") in h_team or search_b.lower().replace("_", " ") in a_team:
-                    is_team_a_home = search_a.lower().replace("_", " ") in h_team
-                    
-                    goals = match['goals']
-                    xg_data = match['xG']
-                    
-                    raw_date = match.get('datetime', '')
+def _get_epl_master_data():
+    """Fetches ALL EPL team & match data in ONE request via Understat's XHR API, with daily JSON caching."""
+    global _EPL_LEAGUE_CACHE
+    if _EPL_LEAGUE_CACHE is not None:
+        return _EPL_LEAGUE_CACHE
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    cache_file = os.path.join(base_dir, "epl_stats_cache.json")
+    today_str = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    force_refresh = "--refresh" in sys.argv
+
+    # 1. Check local daily JSON cache first
+    cache_data = {}
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+        except Exception:
+            pass
+
+    if not force_refresh and cache_data.get("date") == today_str and cache_data.get("data"):
+        print("📦 [EPL CACHE] Loaded today's Understat EPL data from local cache.")
+        _EPL_LEAGUE_CACHE = cache_data["data"]
+        return _EPL_LEAGUE_CACHE
+
+    # 2. Fetch live from Understat's internal XHR endpoint with required 2026 headers
+    now = datetime.datetime.now()
+    target_season = now.year if now.month >= 8 else now.year - 1
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://understat.com/league/EPL"
+    }
+
+    for season in [target_season, target_season - 1]:
+        url = f"https://understat.com/getLeagueData/EPL/{season}"
+        print(f"⚽ [EPL] Fetching Understat XHR API for {season} season...")
+        try:
+            # Use cloudscraper if installed to bypass Cloudflare fingerprint checks, else standard requests
+            try:
+                import cloudscraper
+                scraper = cloudscraper.create_scraper()
+                res = scraper.get(url, headers=headers, timeout=10)
+            except ImportError:
+                res = requests.get(url, headers=headers, timeout=10)
+
+            if res.status_code == 200:
+                data = res.json()
+                if data and data.get("teams"):
+                    _EPL_LEAGUE_CACHE = data
                     try:
-                        date_obj = datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S")
-                        formatted_date = date_obj.strftime("%b %d, %Y")
-                    except ValueError:
-                        formatted_date = raw_date[:10]
-                    
-                    if is_team_a_home:
-                        score_a = int(goals['h'])
-                        score_b = int(goals['a'])
-                        xg_a = float(xg_data['h'])
-                        xg_b = float(xg_data['a'])
-                        venue = f"{team_a} (H) vs {team_b} (A)"
-                    else:
-                        score_a = int(goals['a'])
-                        score_b = int(goals['h'])
-                        xg_a = float(xg_data['a'])
-                        xg_b = float(xg_data['h'])
-                        venue = f"{team_a} (A) vs {team_b} (H)"
-                        
-                    h2h_matches.append({
-                        'date': formatted_date,
-                        'venue': venue,
-                        'score_a': score_a,
-                        'score_b': score_b,
-                        'xg_a': xg_a,
-                        'xg_b': xg_b,
-                        'team_a_name': team_a,
-                        'team_b_name': team_b
-                    })
-                    
-                    if len(h2h_matches) >= 2:
-                        break
-                        
-            return h2h_matches
-            
-    except Exception:
-        return []
+                        with open(cache_file, "w", encoding="utf-8") as f:
+                            json.dump({"date": today_str, "data": data}, f)
+                        print(f"💾 [EPL CACHE] Saved fresh Understat EPL metrics for {today_str}.")
+                    except Exception:
+                        pass
+                    return _EPL_LEAGUE_CACHE
+        except Exception as e:
+            print(f"⚠️ [EPL] Understat connection error for {season}: {e}")
+
+    # 3. Fallback to older cached data if Understat is temporarily unreachable
+    if cache_data.get("data"):
+        print("⚠️ [EPL] Live Understat fetch failed; falling back to last known cached data.")
+        _EPL_LEAGUE_CACHE = cache_data["data"]
+        return _EPL_LEAGUE_CACHE
+
+    _EPL_LEAGUE_CACHE = {}
+    return _EPL_LEAGUE_CACHE
+
+
+def fetch_epl_xpts_rankings():
+    """Calculates EPL xPTS rankings instantly from the master league payload."""
+    data = _get_epl_master_data()
+    teams_dict = data.get("teams", {})
+    if not teams_dict:
+        return {}
+
+    team_xpts = []
+    for team_id, t_info in teams_dict.items():
+        name = t_info.get("title", "").lower()
+        history = t_info.get("history", [])
+        total_xpts = sum(float(m.get("xpts", 0)) for m in history)
+        team_xpts.append((name, total_xpts))
+
+    team_xpts.sort(key=lambda x: x[1], reverse=True)
+    return {name.replace("_", " "): {"rank": str(rank)} for rank, (name, _) in enumerate(team_xpts, 1)}
 
 
 def fetch_epl_team_metrics(team_name):
-    """Pulls KenPom-style season metrics (PPDA Pressing & Expected Points Luck)."""
-    search_name = format_understat_name(team_name)
-    current_year = str(datetime.now().year)
-    previous_year = str(int(current_year) - 1)
-    
-    try:
-        with UnderstatClient() as understat:
-            for season in [current_year, previous_year]:
-                try:
-                    stats_data = understat.team(team=search_name).get_team_data(season=season)
-                    if not stats_data:
-                        continue
-                        
-                    ppda_att = float(stats_data.get('ppda', {}).get('att', 0))
-                    ppda_def = float(stats_data.get('ppda', {}).get('def', 0))
-                    pts = float(stats_data.get('pts', 0))
-                    xpts = float(stats_data.get('xpts', 0.0))
-                    luck_diff = pts - xpts
-                    
-                    return {
-                        'ppda': ppda_att,
-                        'ppda_allowed': ppda_def,
-                        'pts': pts,
-                        'xpts': xpts,
-                        'luck': luck_diff
-                    }
-                except Exception:
-                    continue
+    """Calculates season PPDA Pressing & Expected Points Luck directly from the team's history array."""
+    data = _get_epl_master_data()
+    teams_dict = data.get("teams", {})
+    if not teams_dict:
         return None
-    except Exception:
-        return None
+
+    search_name = format_understat_name(team_name).lower()
+    for _, t_info in teams_dict.items():
+        title = t_info.get("title", "").lower()
+        if search_name == title or search_name in title or title in search_name:
+            history = t_info.get("history", [])
+            if not history:
+                return None
+
+            pts = sum(float(m.get("pts", 0)) for m in history)
+            xpts = sum(float(m.get("xpts", 0.0)) for m in history)
+            
+            # Aggregate season PPDA from match history
+            att_passes = sum(float(m.get("ppda", {}).get("att", 0)) for m in history)
+            def_actions = sum(float(m.get("ppda", {}).get("def", 0)) for m in history)
+            ppda_ratio = (att_passes / def_actions) if def_actions > 0 else 0.0
+
+            opp_passes = sum(float(m.get("ppda_allowed", {}).get("att", 0)) for m in history)
+            opp_def = sum(float(m.get("ppda_allowed", {}).get("def", 0)) for m in history)
+            ppda_allowed_ratio = (opp_passes / opp_def) if opp_def > 0 else 0.0
+
+            return {
+                "ppda": ppda_ratio,
+                "ppda_allowed": ppda_allowed_ratio,
+                "pts": pts,
+                "xpts": xpts,
+                "luck": pts - xpts
+            }
+    return None
+
+
+def fetch_epl_xg_form(team_name):
+    """Extracts last 5 completed matches for a team from the master 'dates' list."""
+    data = _get_epl_master_data()
+    dates_list = data.get("dates", [])
+    if not dates_list:
+        return []
+
+    search_name = format_understat_name(team_name).lower()
+    completed = [
+        m for m in dates_list
+        if m.get("isResult") and (
+            search_name in m.get("h", {}).get("title", "").lower() or
+            search_name in m.get("a", {}).get("title", "").lower()
+        )
+    ]
+
+    if not completed:
+        return []
+
+    last_5 = completed[-5:][::-1]
+    team_results = []
+
+    for match in last_5:
+        h_team = match["h"]["title"]
+        a_team = match["a"]["title"]
+        is_home = search_name in h_team.lower()
+
+        goals = match["goals"]
+        xg_data = match["xG"]
+        raw_date = match.get("datetime", "")
+        try:
+            formatted_date = datetime.datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S").strftime("%b %d")
+        except ValueError:
+            formatted_date = raw_date[:10]
+
+        if is_home:
+            opponent, venue = a_team, "H"
+            scored, conceded = int(goals["h"]), int(goals["a"])
+            xG, xGA = float(xg_data["h"]), float(xg_data["a"])
+        else:
+            opponent, venue = h_team, "A"
+            scored, conceded = int(goals["a"]), int(goals["h"])
+            xG, xGA = float(xg_data["a"]), float(xg_data["h"])
+
+        result = "W" if scored > conceded else "L" if scored < conceded else "D"
+        team_results.append({
+            "date": formatted_date, "venue": venue, "opponent": opponent,
+            "result": result, "scored": scored, "missed": conceded,
+            "xG": xG, "xGA": xGA
+        })
+
+    return team_results
+
+
+def fetch_epl_head_to_head(team_a, team_b):
+    """Finds completed H2H matches from the master 'dates' list without extra API calls."""
+    data = _get_epl_master_data()
+    dates_list = data.get("dates", [])
+    if not dates_list:
+        return []
+
+    search_a = format_understat_name(team_a).lower()
+    search_b = format_understat_name(team_b).lower()
+
+    h2h_matches = []
+    for match in reversed(dates_list):
+        if not match.get("isResult"):
+            continue
+        h_title = match.get("h", {}).get("title", "").lower()
+        a_title = match.get("a", {}).get("title", "").lower()
+
+        if (search_a in h_title and search_b in a_title) or (search_b in h_title and search_a in a_title):
+            is_team_a_home = search_a in h_title
+            goals, xg_data = match["goals"], match["xG"]
+            raw_date = match.get("datetime", "")
+            try:
+                formatted_date = datetime.datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S").strftime("%b %d, %Y")
+            except ValueError:
+                formatted_date = raw_date[:10]
+
+            if is_team_a_home:
+                score_a, score_b = int(goals["h"]), int(goals["a"])
+                xg_a, xg_b = float(xg_data["h"]), float(xg_data["a"])
+                venue = f"{team_a} (H) vs {team_b} (A)"
+            else:
+                score_a, score_b = int(goals["a"]), int(goals["h"])
+                xg_a, xg_b = float(xg_data["a"]), float(xg_data["h"])
+                venue = f"{team_a} (A) vs {team_b} (H)"
+
+            h2h_matches.append({
+                "date": formatted_date, "venue": venue,
+                "score_a": score_a, "score_b": score_b,
+                "xg_a": xg_a, "xg_b": xg_b,
+                "team_a_name": team_a, "team_b_name": team_b
+            })
+            if len(h2h_matches) >= 2:
+                break
+
+    return h2h_matches
 
 
 def fetch_epl_injuries(team_name):
-    """Fetches and formats injuries specifically for a single team. Returns empty string if none."""
-    
-    # Map the incoming FanDuel name directly to the exact FPL database name
+    """Fetches FPL bootstrap-static ONCE per run and filters in memory."""
+    global _FPL_BOOTSTRAP_CACHE
     fpl_name_map = {
-        "Tottenham Hotspur": "Spurs",
-        "Manchester United": "Man Utd",
-        "Manchester City": "Man City",
-        "Newcastle United": "Newcastle",
-        "Newcastle Utd": "Newcastle",
-        "Wolverhampton Wanderers": "Wolves",
-        "Brighton and Hove Albion": "Brighton",
-        "Nottingham Forest": "Nott'm Forest",
-        "Leicester City": "Leicester",
-        "Ipswich Town": "Ipswich",
-        "Hull City": "Hull",
-        "Coventry City": "Coventry"
+        "Tottenham Hotspur": "Spurs", "Manchester United": "Man Utd", "Manchester City": "Man City",
+        "Newcastle United": "Newcastle", "Newcastle Utd": "Newcastle", "Wolverhampton Wanderers": "Wolves",
+        "Brighton and Hove Albion": "Brighton", "Nottingham Forest": "Nott'm Forest",
+        "Leicester City": "Leicester", "Ipswich Town": "Ipswich", "Hull City": "Hull", "Coventry City": "Coventry"
     }
-    
     fpl_search_name = fpl_name_map.get(team_name, team_name)
-    
+
     try:
-        url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
+        if _FPL_BOOTSTRAP_CACHE is None:
+            url = "https://fantasy.premierleague.com/api/bootstrap-static/"
+            res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            _FPL_BOOTSTRAP_CACHE = res.json() if res.status_code == 200 else {}
+
+        if not _FPL_BOOTSTRAP_CACHE:
             return ""
-            
-        data = response.json()
-        teams = {t['id']: t['name'] for t in data.get('teams', [])}
-        players = data.get('elements', [])
-        
+
+        teams = {t["id"]: t["name"] for t in _FPL_BOOTSTRAP_CACHE.get("teams", [])}
+        players = _FPL_BOOTSTRAP_CACHE.get("elements", [])
         injured_players = []
-        
+
         for player in players:
-            status = player.get('status')
-            news = player.get('news', '')
-            
-            # Check for injured or doubtful statuses
-            if status in ['i', 'd'] or (news and ('injured' in news.lower() or 'doubt' in news.lower() or 'suspended' in news.lower())):
-                team_id = player.get('team')
-                team_full_name = teams.get(team_id, '')
-                
-                # Check if the mapped FPL name is in the FPL database name
+            status = player.get("status")
+            news = player.get("news", "")
+            if status in ["i", "d"] or (news and any(w in news.lower() for w in ["injured", "doubt", "suspended"])):
+                team_full_name = teams.get(player.get("team"), "")
                 if fpl_search_name.lower() in team_full_name.lower():
                     name = f"{player.get('first_name')} {player.get('second_name')}"
-                    chance = player.get('chance_of_playing_next_round')
+                    chance = player.get("chance_of_playing_next_round")
                     chance_str = f" ({chance}% chance)" if chance is not None else ""
                     injured_players.append(f"<li><b>{name}</b>{chance_str}: {news}</li>")
-                    
-        # Return an empty string if no injuries exist so it doesn't clutter the UI
+
         if not injured_players:
             return ""
-            
-        html = f"<div style='margin-bottom: 8px; font-size: 11px;'>"
-        html += f"<strong style='color: #c53030;'>🏥 {team_name} Injuries:</strong>"
-        html += f"<ul style='margin: 2px 0 0 15px; padding: 0; color: #4a5568;'>"
-        html += "".join(injured_players)
-        html += f"</ul></div>"
-        return html
-        
+
+        return (
+            f"<div style='margin-bottom: 8px; font-size: 11px;'>"
+            f"<strong style='color: #c53030;'>🏥 {team_name} Injuries:</strong>"
+            f"<ul style='margin: 2px 0 0 15px; padding: 0; color: #4a5568;'>{''.join(injured_players)}</ul></div>"
+        )
     except Exception as e:
         print(f"Injury fetch error for {team_name}: {e}")
         return ""
 
-def fetch_epl_xpts_rankings():
-    """Fetches EPL xPTS rankings safely using the understatapi client."""
-    from understatapi import UnderstatClient
-    from datetime import datetime
-    
-    print("⚽ Fetching EPL xPTS Rankings via Understat API...")
-    current_year = str(datetime.now().year)
-    previous_year = str(int(current_year) - 1)
-    
-    try:
-        with UnderstatClient() as understat:
-            # Fetch current season
-            league_data = understat.league(league="EPL").get_team_data(season=current_year)
-            
-            # If current season exists but has no games yet, fall back to previous
-            if not league_data:
-                league_data = understat.league(league="EPL").get_team_data(season=previous_year)
-                
-            if not league_data:
-                return {}
-                
-            team_xpts = []
-            for team_id, data in league_data.items():
-                name = data['title'].lower()
-                history = data.get('history', [])
-                
-                # Sum up expected points from all matches this season
-                total_xpts = sum(float(m.get('xpts', 0)) for m in history)
-                team_xpts.append((name, total_xpts))
-                
-            # Sort by highest xPTS to lowest
-            team_xpts.sort(key=lambda x: x[1], reverse=True)
-            
-            epl_ranks = {}
-            for rank, (name, xpts) in enumerate(team_xpts, 1):
-                clean_name = name.replace('_', ' ')
-                epl_ranks[clean_name] = {"rank": str(rank)}
-                
-            return epl_ranks
-            
-    except Exception as e:
-        print(f"⚠️ Error fetching Understat xPTS via API: {e}")
-        return {}
+
+if __name__ == "__main__":
+    print("🚀 Testing new Understat XHR API & Caching...")
+    ranks = fetch_epl_xpts_rankings()
+    print(f"✅ Loaded xPTS Rankings for {len(ranks)} EPL teams.")
+    spurs_form = fetch_epl_xg_form("Tottenham Hotspur")
+    spurs_metrics = fetch_epl_team_metrics("Tottenham Hotspur")
+    print(f"✅ Tottenham Last 5 Matches Found: {len(spurs_form)}")
+    print(f"✅ Tottenham Metrics: {spurs_metrics}")

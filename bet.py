@@ -40,28 +40,31 @@ def get_active_leagues():
     
     active_leagues = {}
     
-    # NFL: August (8) through February (2)
+    # 1. NFL
     if month >= 8 or month <= 2:
         active_leagues["NFL"] = "americanfootball_nfl"
         
-    # NCAAF: August (8) through January (1)
-    if month >= 8 or month <= 1:
-        active_leagues["NCAAF"] = "americanfootball_ncaaf"
-        
-    # NBA & NHL: October (10) through June (6)
-    if month >= 10 or month <= 6:
-        active_leagues["NBA"] = "basketball_nba"
-        active_leagues["NHL"] = "icehockey_nhl"
-        
-    # NCAAB: November (11) through April (4)
+    # 2. NCAAB
     if month >= 11 or month <= 4:
         active_leagues["NCAAB"] = "basketball_ncaab"
         
-    # EPL: August (8) through May (5)
+    # 3. NBA
+    if month >= 10 or month <= 6:
+        active_leagues["NBA"] = "basketball_nba"
+        
+    # 4. NCAAF
+    if month >= 8 or month <= 1:
+        active_leagues["NCAAF"] = "americanfootball_ncaaf"
+        
+    # 5. EPL
     if month >= 8 or month <= 5:
         active_leagues["EPL"] = "soccer_epl"
         
-    # MLB: March (3) through November (11)
+    # 6. NHL
+    if month >= 10 or month <= 6:
+        active_leagues["NHL"] = "icehockey_nhl"
+        
+    # 7. MLB
     if 3 <= month < 11:
         active_leagues["MLB"] = "baseball_mlb"
         
@@ -396,12 +399,20 @@ def fetch_covers_injuries(team_name, league):
         
     return injuries
 
+
+_ESPN_SCOREBOARD_CACHE = {}
+
 def get_live_espn_score(league_name, matchup_str):
     sport_path = ESPN_SPORT_MAP.get(league_name.lower())
     if not sport_path or not matchup_str: return None, "upcoming"
         
     try:
-        data = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard", timeout=4).json()
+        if sport_path not in _ESPN_SCOREBOARD_CACHE:
+            _ESPN_SCOREBOARD_CACHE[sport_path] = requests.get(
+                f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard", timeout=4
+            ).json()
+        data = _ESPN_SCOREBOARD_CACHE[sport_path]
+        
         matchup_lower = matchup_str.lower()
         for event in data.get('events', []):
             if any(team['team']['displayName'].lower() in matchup_lower for team in event['competitions'][0]['competitors']):
@@ -571,9 +582,10 @@ def fetch_phillies_7_day_schedule():
         
     return schedule_list
 
-def filter_college_games(odds_games, league):
+def filter_college_games(odds_games, league, global_stats=None):
     """Filters NCAAF and NCAAB games to Top 25 teams, Power Conference Head-to-Heads, and Delaware."""
     import requests
+    import re
     
     # 1. Fetch the actual AP Top 25 Rankings directly from ESPN
     espn_sport = "basketball/mens-college-basketball" if league.upper() == "NCAAB" else "football/college-football"
@@ -657,21 +669,33 @@ def filter_college_games(odds_games, league):
             filtered_games.append(game)
             continue
             
-        # Rule 2: Does the game involve a Top 25 team?
+        # Rule 2: Does the game involve a Top 25 AP team?
         if bool(away_rank_str or home_rank_str):
             filtered_games.append(game)
             continue
             
+        # Rule 2b: Does the game involve a Top 25 KenPom/EPA team?
+        if global_stats:
+            _, away_kp = get_league_badge_and_val(away, league, global_stats)
+            _, home_kp = get_league_badge_and_val(home, league, global_stats)
+            if away_kp <= 25 or home_kp <= 25:
+                filtered_games.append(game)
+                continue
+            
         # Rule 3: Are BOTH teams in the Power Conferences?
-        away_is_power = any(p in away for p in power_teams)
-        home_is_power = any(p in home for p in power_teams)
+        # Use Regex word boundaries so "duke" doesn't match "dukes"
+        away_is_power = any(re.search(rf'\b{re.escape(p)}\b', away) for p in power_teams)
+        home_is_power = any(re.search(rf'\b{re.escape(p)}\b', home) for p in power_teams)
         
-        # Anti-greedy check for the Power Conference matchups
+        # Anti-greedy check: catch directional/regional schools sharing power names (e.g., Miami vs Miami OH)
+        directional_tags = [" st", " state", " tech", "(oh)", "ohio", "eastern", "western", "northern", "southern", "central"]
+        
         if away_is_power:
-             if (" st" in away or " state" in away or " tech" in away) and not any(p in away for p in power_teams if " st" in p or " state" in p or " tech" in p):
+             if any(d in away for d in directional_tags) and not any(p in away for p in power_teams if any(d in p for d in directional_tags)):
                  away_is_power = False
+                 
         if home_is_power:
-             if (" st" in home or " state" in home or " tech" in home) and not any(p in home for p in power_teams if " st" in p or " state" in p or " tech" in p):
+             if any(d in home for d in directional_tags) and not any(p in home for p in power_teams if any(d in p for d in directional_tags)):
                  home_is_power = False
         
         if away_is_power and home_is_power:
@@ -962,7 +986,7 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league):
                 if local_dt > future_limit:
                     continue 
                     
-                future_leagues = ["NFL", "NCAAB", "NCAAF", "EPL"]
+                future_leagues = ["NFL", "NCAAF", "EPL"]
                 if today_date.month > 9 or (today_date.month == 9 and today_date.day >= 15):
                     future_leagues.append("MLB")
                     
@@ -1437,6 +1461,7 @@ def build_sports_briefings():
         # Unified stats dictionary accessible across all schedule renderers
     global_stats = {
         "NFL": football_stats.get("NFL", {}),
+        "NCAAF": football_stats.get("NCAAF", {}),
         "NHL": nhl_power_ranks,
         "EPL": epl_xpts_ranks,
         "NBA": nba_stats,
@@ -1478,9 +1503,6 @@ def build_sports_briefings():
             print(f"Cache Read Error: {e}")
     
     for league, api_key in LEAGUE_MAPPING.items():
-        covers_data = fetch_covers_consensus(league)
-        tv_data = fetch_tv_networks(league)
-        
         if cache_is_fresh and league in cached_raw_odds:
             raw_odds = cached_raw_odds[league]
             print(f"📦 [CACHE] Using cached odds for {league}.")
@@ -1490,13 +1512,29 @@ def build_sports_briefings():
             if raw_odds is not None:
                 cached_raw_odds[league] = raw_odds
             else:
-                raw_odds = []  # Fallback to empty list for the rest of the loop, but DO NOT save to cache
-        
-        # Pre-filtering raw data
+                raw_odds = []
+
+        # 1. Early Exit: If no odds exist for this sport, skip all scraping!
+        if not raw_odds:
+            print(f"⏭️ [SKIP] No active odds for {league}. Skipping scrapers.")
+            league_slates[league] = []
+            continue
+
+        # 2. Pre-filter College Games (remember to pass global_stats!)
         if league.upper() in ["NCAAF", "NCAAB"]:
-            raw_odds = filter_college_games(raw_odds, league)
+            raw_odds = filter_college_games(raw_odds, league, global_stats)
+
+        if not raw_odds:
+            print(f"⏭️ [SKIP] No {league} games matched filter criteria.")
+            league_slates[league] = []
+            continue
+
+        # 3. Only now fetch supporting league data
+        covers_data = fetch_covers_consensus(league)
+        tv_data = fetch_tv_networks(league)
         su_data = fetch_espn_records(league)
         ats_data = fetch_ats_records(league)
+        
         parsed_games = parse_game_metrics(raw_odds, covers_data, tv_data, su_data, ats_data, league)
             
         final_display_list = []
@@ -2143,6 +2181,7 @@ if __name__ == '__main__':
     web_html, email_html = build_sports_briefings()
     
     # 2. Save the full app to index.html for GitHub Pages
+    print("📝 [LOCAL] Building and writing index.html...")
     file_path = r"C:\Users\jblum\Python\SportsNewsletter\index.html"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(web_html)

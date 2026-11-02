@@ -388,6 +388,12 @@ def fetch_cfb_stats():
                 cfbd_df['def_rush_rk'] = cfbd_df[def_rush].rank(ascending=True, method='min')
                 cfbd_df['def_sr_rk'] = cfbd_df[def_sr].rank(ascending=True, method='min')
 
+                # --- NEW: Calculate Net EPA and Overall Rank ---
+                cfbd_df['net_epa'] = cfbd_df[off_tot] - cfbd_df[def_tot]
+                cfbd_df['net_epa_rk'] = cfbd_df['net_epa'].rank(ascending=False, method='min')
+
+                
+
                 for idx, row in cfbd_df.iterrows():
                     team_raw = str(row.get('team', '')).lower()
                     team_clean = team_raw.replace("state", "st")
@@ -421,6 +427,9 @@ def fetch_cfb_stats():
                         stats_map[target_key]["def_rush_rank"] = f"{int(row['def_rush_rk'])}"
                         stats_map[target_key]["def_success"] = f"{float(row[def_sr])*100:.1f}%"
                         stats_map[target_key]["def_success_rank"] = f"{int(row['def_sr_rk'])}"
+                        
+                        # --- NEW: Save the Net EPA Rank ---
+                        stats_map[target_key]["net_epa_rank"] = f"{int(row['net_epa_rk'])}"
 
         return stats_map
     except Exception as e:
@@ -546,14 +555,22 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
                             home_data.get('def_ypg', '-'), home_data.get('def_ypg_rank', '-'))
     ]
 
+    # --- NEW: Extract Overall Net EPA Rank for the Headers ---
+    a_epa = away_data.get('net_epa_rank', '')
+    h_epa = home_data.get('net_epa_rank', '')
+    
+    # Format the rank with a light blue tag using your preferred standard (#) parenthesis format
+    a_title = f"<span style='color: #90cdf4; font-size: 12px; font-weight: 800;'>({a_epa})</span> {away_team}" if str(a_epa).isdigit() and a_epa not in ["99", "999"] else away_team
+    h_title = f"{home_team} <span style='color: #90cdf4; font-size: 12px; font-weight: 800;'>({h_epa})</span>" if str(h_epa).isdigit() and h_epa not in ["99", "999"] else home_team
+
     html = f"""
     <div style="margin: 12px 0 8px 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
         <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: center;">
             <thead>
                 <tr style="background-color: #2d3748; color: #ffffff;">
-                    <th style="padding: 6px 8px; width: 35%; text-align: left;">{away_team}</th>
+                    <th style="padding: 6px 8px; width: 35%; text-align: left;">{a_title}</th>
                     <th style="padding: 6px 4px; width: 30%; color: #cbd5e0; font-weight: normal;">Category</th>
-                    <th style="padding: 6px 8px; width: 35%; text-align: right;">{home_team}</th>
+                    <th style="padding: 6px 8px; width: 35%; text-align: right;">{h_title}</th>
                 </tr>
             </thead>
             <tbody>
