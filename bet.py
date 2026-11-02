@@ -32,15 +32,43 @@ SENDER_PASSWORD = "lzygskznkqcejpva"
 
 ODDS_API_KEY = "c309fe5bbfddf608017dafd09997ee95"
 
-LEAGUE_MAPPING = {
-    "NFL": "americanfootball_nfl",
-    "NCAAB": "basketball_ncaab",
-    "EPL": "soccer_epl",
-    "NCAAF": "americanfootball_ncaaf",
-    "NBA": "basketball_nba",
-    "NHL": "icehockey_nhl",
-    "MLB": "baseball_mlb"
-}
+def get_active_leagues():
+    """Dynamically returns leagues that are currently in season based on the current date."""
+    import datetime
+    now = datetime.datetime.now()
+    month = now.month
+    
+    active_leagues = {}
+    
+    # NFL: August (8) through February (2)
+    if month >= 8 or month <= 2:
+        active_leagues["NFL"] = "americanfootball_nfl"
+        
+    # NCAAF: August (8) through January (1)
+    if month >= 8 or month <= 1:
+        active_leagues["NCAAF"] = "americanfootball_ncaaf"
+        
+    # NBA & NHL: October (10) through June (6)
+    if month >= 10 or month <= 6:
+        active_leagues["NBA"] = "basketball_nba"
+        active_leagues["NHL"] = "icehockey_nhl"
+        
+    # NCAAB: November (11) through April (4)
+    if month >= 11 or month <= 4:
+        active_leagues["NCAAB"] = "basketball_ncaab"
+        
+    # EPL: August (8) through May (5)
+    if month >= 8 or month <= 5:
+        active_leagues["EPL"] = "soccer_epl"
+        
+    # MLB: March (3) through November (11)
+    if 3 <= month < 11:
+        active_leagues["MLB"] = "baseball_mlb"
+        
+    return active_leagues
+
+# Initialize the mapping dynamically when the script runs
+LEAGUE_MAPPING = get_active_leagues()
 
 # --- NEW: Master ESPN API Routing Map ---
 ESPN_SPORT_MAP = {
@@ -601,18 +629,24 @@ def filter_college_games(odds_games, league):
 
         away_rank_str = ""
         home_rank_str = ""
+        modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st", "tech", "a&m", "ohio"]
+        
         for t_name, t_rank in top_25_teams.items():
-            # Anti-greedy check so "Tennessee St" doesn't get ranked as "Tennessee"
+            # Anti-greedy check so directional schools don't inherit base school AP ranks
             if t_name in away and not away_rank_str:
-                if (" st" in away or " state" in away or " tech" in away) and (" st" not in t_name and " state" not in t_name and " tech" not in t_name):
-                    pass
-                else:
+                is_valid = True
+                for mod in modifiers:
+                    if (f"{mod} " in away or f" {mod}" in away) and (f"{mod} " not in t_name and f" {mod}" not in t_name):
+                        is_valid = False
+                if is_valid:
                     away_rank_str = f"({t_rank}) "
                     
             if t_name in home and not home_rank_str:
-                 if (" st" in home or " state" in home or " tech" in home) and (" st" not in t_name and " state" not in t_name and " tech" not in t_name):
-                    pass
-                 else:
+                 is_valid = True
+                 for mod in modifiers:
+                    if (f"{mod} " in home or f" {mod}" in home) and (f"{mod} " not in t_name and f" {mod}" not in t_name):
+                        is_valid = False
+                 if is_valid:
                     home_rank_str = f"({t_rank}) "
 
         game['away_rank'] = away_rank_str
@@ -1118,6 +1152,7 @@ def format_consensus(consensus_str):
         return consensus_str
 
 def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="font-size: 10px; color: #64748b; font-weight: 700;"):
+    import re
     t_lower = team_str.lower().strip()
     league_data = (global_stats or {}).get(lg.upper(), {})
 
@@ -1145,17 +1180,43 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
 
     # --- NHL, NFL, NCAAF, NCAAB (American Mascots) ---
     mascot = t_lower.split()[-1]
+    
+    # Regional and directional modifiers that shouldn't be ignored
+    modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh"]
+
     for key, metrics in league_data.items():
         k_lower = key.lower()
+        match_found = False
         
-        # Anti-greedy check for college rankings
-        if (" st" in t_lower or " state" in t_lower or " tech" in t_lower) and (" st" not in k_lower and " state" not in k_lower and " tech" not in k_lower):
-            continue
+        # 1. Exact Match or Mascot Match
+        if k_lower == t_lower or (len(mascot) > 3 and k_lower == mascot):
+            match_found = True
             
-        if k_lower == t_lower or k_lower in t_lower or t_lower in k_lower or (len(mascot) > 3 and k_lower == mascot):
+        # 2. Substring match with strict anti-greedy safeguards
+        elif k_lower in t_lower:
+            # Must be a full word match (Prevents "duke" from matching "dukes")
+            if re.search(rf'\b{re.escape(k_lower)}\b', t_lower):
+                match_found = True
+                # Prevent base schools (Illinois) from matching regional schools (Eastern Illinois)
+                for mod in modifiers:
+                    if re.search(rf'\b{re.escape(mod)}\b', t_lower) and not re.search(rf'\b{re.escape(mod)}\b', k_lower):
+                        match_found = False
+                        break
+                        
+        # 3. Reverse substring match
+        elif t_lower in k_lower:
+             if re.search(rf'\b{re.escape(t_lower)}\b', k_lower):
+                match_found = True
+                for mod in modifiers:
+                    if re.search(rf'\b{re.escape(mod)}\b', k_lower) and not re.search(rf'\b{re.escape(mod)}\b', t_lower):
+                        match_found = False
+                        break
+
+        if match_found:
             rk = metrics.get("net_epa_rank") or metrics.get("rank")
             if rk and str(rk) not in ["99", "-", ""]:
                 return format_badge(rk), int(rk)
+                
     return "", 999
 
 ##Dynamic HTML Block
