@@ -28,18 +28,64 @@ NBA_MASCOT_MAP = {
 }
 
 # Maps Odds API full names ("UCLA Bruins") to BartTorvik/KenPom school names ("ucla")
+# Maps Odds API full names ("UCLA Bruins") to BartTorvik/KenPom school names ("ucla")
 NCAAB_ALIASES = {
     "uconn": "connecticut", "connecticut": "connecticut",
     "ole miss": "mississippi", "nc state": "north carolina st.",
     "pittsburgh": "pitt", "smu": "southern methodist",
     "tcu": "texas christian", "ucf": "central florida",
     "byu": "brigham young", "lsu": "louisiana st.",
-    "st. john's": "st. john's", "miami": "miami fl",
-    "usc": "USC", "ucla": "ucla", "penn state": "penn st.",
-    "ohio state": "ohio st.", "michigan state": "michigan st.",
-    "iowa state": "iowa st.", "kansas state": "kansas st.",
-    "oklahoma state": "oklahoma st.", "mississippi state": "mississippi st.",
-    "florida state": "florida st.", "arizona state": "arizona st."
+    "st. john's": "st. john's", "st. john's red storm": "st. john's",
+    "miami": "miami fl", "miami hurricanes": "miami fl", "miami (oh) redhawks": "miami oh",
+    "usc": "USC", "ucla": "ucla", "ucla bruins": "ucla",
+    "penn state": "penn st.", "penn state nittany lions": "penn st.",
+    "ohio state": "ohio st.", "ohio state buckeyes": "ohio st.",
+    "michigan state": "michigan st.", "michigan state spartans": "michigan st.",
+    "iowa state": "iowa st.", "iowa state cyclones": "iowa st.",
+    "kansas state": "kansas st.", "oklahoma state": "oklahoma st.",
+    "mississippi state": "mississippi st.",
+    "florida state": "florida st.", "florida state seminoles": "florida st.", "florida st seminoles": "florida st.",
+    "arizona state": "arizona st.",
+    "jackson st tigers": "jackson st.", "memphis tigers": "memphis",
+    "alcorn st braves": "alcorn st.",
+    "arizona st sun devils": "arizona st.",
+    "arkansas st red wolves": "arkansas st.",
+    "arkansas-little rock trojans": "little rock",
+    "bethune-cookman wildcats": "bethune cookman",
+    "boston univ. terriers": "boston university",
+    "central connecticut st blue devils": "central connecticut",
+    "chicago st cougars": "chicago st.",
+    "colorado st rams": "colorado st.",
+    "east tennessee st buccaneers": "east tennessee st.",
+    "gw revolutionaries": "george washington",
+    "gardner-webb bulldogs": "gardner webb",
+    "georgia st panthers": "georgia st.",
+    "hawai'i rainbow warriors": "hawaii",
+    "illinois st redbirds": "illinois st.",
+    "indiana st sycamores": "indiana st.",
+    "long beach st 49ers": "long beach st.",
+    "loyola (chi) ramblers": "loyola chicago",
+    "loyola (md) greyhounds": "loyola md",
+    "maryland-eastern shore hawks": "maryland eastern shore",
+    "michigan st spartans": "michigan st.",
+    "mississippi st bulldogs": "mississippi st.",
+    "montana st bobcats": "montana st.",
+    "morehead st eagles": "morehead st.",
+    "mt. st. mary's mountaineers": "mount st. mary's",
+    "murray st racers": "murray st.",
+    "nc state wolfpack": "north carolina st.",
+    "northwestern st demons": "northwestern st.",
+    "oklahoma st cowboys": "oklahoma st.",
+    "oregon st beavers": "oregon st.",
+    "se missouri st redhawks": "southeast missouri st.",
+    "san josé st spartans": "san jose st.",
+    "tenn-martin skyhawks": "tennessee martin",
+    "tennessee st tigers": "tennessee st.",
+    "ul monroe warhawks": "louisiana monroe",
+    "umkc kangaroos": "kansas city",
+    "washington st cougars": "washington st.",
+    "wright st raiders": "wright st.",
+    "youngstown st penguins": "youngstown st."
 }
 
 def _clean_team_key(name):
@@ -362,6 +408,11 @@ def fetch_ncaab_stats():
 
                 stats_map[t_key] = entry
 
+            # --- NEW: Inject aliases directly into the dictionary ---
+            for alias_key, kp_key in NCAAB_ALIASES.items():
+                if kp_key in stats_map:
+                    stats_map[alias_key] = stats_map[kp_key]
+
             print(f"✅ [NCAAB] Successfully parsed {len(stats_map)} D-I teams from KenPom API (Season {season}).")
             return stats_map
 
@@ -597,15 +648,47 @@ def build_basketball_matchup_html(away_team, home_team, league, global_stats):
 
 # --- STANDALONE TEST BLOCK ---
 if __name__ == "__main__":
-    print("🚀 Booting up KenPom-Style Basketball Analytics Module...\n")
-    nba_stats = fetch_all_basketball_stats("NBA")
+    import json
+    import os
+    print("🚀 Booting up KenPom Mapping Auditor...\n")
+    
+    # 1. Load the KenPom Dictionary
     ncaab_stats = fetch_all_basketball_stats("NCAAB")
-
-    test_html = "<div style='max-width: 720px; margin: 20px auto;'>"
-    test_html += build_basketball_matchup_html("Philadelphia 76ers", "Boston Celtics", "NBA", nba_stats)
-    test_html += build_basketball_matchup_html("UCLA Bruins", "Duke Blue Devils", "NCAAB", ncaab_stats)
-    test_html += "</div>"
-
-    with open("test_basketball.html", "w", encoding="utf-8") as f:
-        f.write(test_html)
-    print("\n✅ Saved 'test_basketball.html'! Open it in your browser to preview the KenPom Scouting Report cards.")
+    
+    # 2. Load the raw Odds API names from your local cache
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    odds_cache_path = os.path.join(base_dir, "raw_odds_cache.json")
+    
+    if not os.path.exists(odds_cache_path):
+        print("⚠️ raw_odds_cache.json not found! Run bet.py once to generate it.")
+    else:
+        with open(odds_cache_path, "r", encoding="utf-8") as f:
+            odds_data = json.load(f)
+            
+        ncaab_odds = odds_data.get("NCAAB", [])
+        
+        unmapped_teams = set()
+        mapped_count = 0
+        
+        # 3. Test every single team in the Odds API feed
+        for game in ncaab_odds:
+            away = game.get("away_team")
+            home = game.get("home_team")
+            
+            for team in [away, home]:
+                if team:
+                    stats = _lookup_team_stats(team, "NCAAB", ncaab_stats)
+                    if not stats:
+                        unmapped_teams.add(team)
+                    else:
+                        mapped_count += 1
+                        
+        # 4. Output the results
+        print(f"✅ Successfully mapped {mapped_count} team instances.")
+        if unmapped_teams:
+            print(f"❌ Failed to map {len(unmapped_teams)} unique teams.\n")
+            print("Copy and paste these into your NCAAB_ALIASES dictionary, and add the KenPom names:")
+            for t in sorted(unmapped_teams):
+                print(f'    "{t.lower()}": "???",')
+        else:
+            print("🎉 All Odds API teams perfectly mapped to KenPom!")

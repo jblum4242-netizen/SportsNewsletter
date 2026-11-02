@@ -1246,26 +1246,38 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
         is_marquee = False
         league_key = g['league'].upper()
 
-        # --- 1. CFB LOGIC (Both teams ranked in AP Top 25) ---
-        if league_key == "NCAAF":
-            if matchup_text.startswith("(") and " vs. (" in matchup_text:
-                is_marquee = True
-
-        # --- 2. NFL, EPL, NHL RANK INJECTION & MARQUEE CHECK ---
-        elif league_key in ["NFL", "EPL", "NHL", "NBA", "NCAAB"] and ' vs. ' in matchup_text:
+        # --- RANK INJECTION & MARQUEE CHECK ---
+        if league_key in ["NFL", "EPL", "NHL", "NBA", "NCAAB", "NCAAF"] and ' vs. ' in matchup_text:
             try:
                 away_raw, home_raw = matchup_text.split(' vs. ')
                 
-                away_badge, away_val = get_league_badge_and_val(away_raw, league_key, global_stats, fmt="(#{rk}) ")
-                home_badge, home_val = get_league_badge_and_val(home_raw, league_key, global_stats, fmt="(#{rk}) ")
+                # Fetch Analytics rank and format it as the primary traditional rank: (2)
+                badge_format = "<span style='color: #0284c7; font-weight: 800; font-size: 10px;'>({rk})</span> "
+                away_badge, away_val = get_league_badge_and_val(away_raw, league_key, global_stats, fmt=badge_format, style="")
+                home_badge, home_val = get_league_badge_and_val(home_raw, league_key, global_stats, fmt=badge_format, style="")
                 
-                matchup_text = f"{away_badge}{away_raw} vs. {home_badge}{home_raw}"
+                # Regex to flip the AP rank to [AP 1] and insert KenPom/EPA as (2)
+                import re
+                def format_ranks(raw_team, analytics_badge):
+                    match = re.match(r'^\((\d+)\)\s*(.*)', raw_team)
+                    if match:
+                        ap_rk = match.group(1)
+                        team_nm = match.group(2)
+                        return f"<span style='color: #94a3b8; font-size: 10px;'>[AP {ap_rk}]</span> {analytics_badge}{team_nm}"
+                    return f"{analytics_badge}{raw_team}"
+                
+                away_formatted = format_ranks(away_raw, away_badge)
+                home_formatted = format_ranks(home_raw, home_badge)
+                
+                matchup_text = f"{away_formatted} vs. {home_formatted}"
 
-                # Marquee thresholds: Top 10 for NFL/NHL, Top 25 for NCAAB
-                if league_key in ["NFL", "NHL","NBA","EPL"] and away_val <= 10 and home_val <= 10:
+                # Marquee thresholds: Top 10 for Pro, Top 25 for College
+                if league_key in ["NFL", "NHL", "NBA", "EPL"] and away_val <= 10 and home_val <= 10:
                     is_marquee = True
-                elif league_key == "NCAAB" and away_val <= 25 and home_val <= 25:
-                    is_marquee = True
+                elif league_key in ["NCAAB", "NCAAF"]:
+                    # Highlight if BOTH teams are Top 25 in Analytics OR Top 25 in the AP Poll
+                    if (away_val <= 25 and home_val <= 25) or (away_raw.startswith("(") and home_raw.startswith("(")):
+                        is_marquee = True
 
             except Exception as e:
                 print(f"⚠️ Error formatting {league_key} ranks in schedule: {e}")
@@ -1574,12 +1586,22 @@ def build_sports_briefings():
         )
         away_team, home_team = game['matchup'].split(' vs. ')
 
-        # Inject overall rankings into the card header for NFL, NHL, EPL, NBA, and NCAAB
-        if league.upper() in ["NFL", "EPL", "NHL", "NBA", "NCAAB"]:
-            card_rk_style = "color: #64748b; font-weight: 700; font-size: 14px;"
-            away_rk_str, _ = get_league_badge_and_val(away_team, league, global_stats, fmt="({rk}) ", style=card_rk_style)
-            home_rk_str, _ = get_league_badge_and_val(home_team, league, global_stats, fmt="({rk}) ", style=card_rk_style)
-            main_title = f"{league}: {away_rk_str}{away_team} vs. {home_rk_str}{home_team}"
+        # Inject overall rankings into the card header for Pro & College
+        if league.upper() in ["NFL", "EPL", "NHL", "NBA", "NCAAB", "NCAAF"]:
+            badge_format = "<span style='color: #0284c7; font-weight: 800; font-size: 14px;'>({rk})</span> "
+            away_rk_str, _ = get_league_badge_and_val(away_team, league, global_stats, fmt=badge_format, style="")
+            home_rk_str, _ = get_league_badge_and_val(home_team, league, global_stats, fmt=badge_format, style="")
+            
+            import re
+            def format_card_ranks(raw_team, analytics_badge):
+                match = re.match(r'^\((\d+)\)\s*(.*)', raw_team)
+                if match:
+                    ap_rk = match.group(1)
+                    team_nm = match.group(2)
+                    return f"<span style='color: #94a3b8; font-size: 14px;'>[AP {ap_rk}]</span> {analytics_badge}{team_nm}"
+                return f"{analytics_badge}{raw_team}"
+                
+            main_title = f"{league}: {format_card_ranks(away_team, away_rk_str)} vs. {format_card_ranks(home_team, home_rk_str)}"
         else:
             main_title = f"{league}: {game['matchup']}"
 
@@ -1777,7 +1799,7 @@ def build_sports_briefings():
         if league.upper() == "MLB":
             league_schedule_games = baseball_news.fetch_mlb_7_day_schedule()
             days_label = "7 Days"
-        elif league.upper() in ["NHL","NBA"]:
+        elif league.upper() in ["NHL","NBA", "NCAAB"]:
             # Restrict NHL and NBA to today's date only
             league_schedule_games = [
                 g for g in all_monitored_games 

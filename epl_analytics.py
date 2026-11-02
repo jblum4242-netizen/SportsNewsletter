@@ -303,10 +303,11 @@ def fetch_epl_xpts_rankings():
     
     try:
         with UnderstatClient() as understat:
-            # Try current season first, fall back to previous if not populated
-            try:
-                league_data = understat.league(league="EPL").get_team_data(season=current_year)
-            except Exception:
+            # Fetch current season
+            league_data = understat.league(league="EPL").get_team_data(season=current_year)
+            
+            # If current season exists but has no games yet, fall back to previous
+            if not league_data:
                 league_data = understat.league(league="EPL").get_team_data(season=previous_year)
                 
             if not league_data:
