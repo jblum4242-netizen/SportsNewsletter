@@ -12,6 +12,54 @@ import requests
 # ==========================================
 CFBD_API_KEY = "LrFNn3N2V22VOBJ3r6a+dmw4iUsD84uV5YZdSbROZQacDHu1f3h2wbciIHRQzQsy"
 
+NCAAF_ALIASES = {
+    "virginia tech hokies": "virginia tech",
+    "smu mustangs": "smu",
+    "nebraska cornhuskers": "nebraska",
+    "illinois fighting illini": "illinois",
+    "new mexico lobos": "new mexico",
+    "nevada wolf pack": "nevada",
+    "tcu horned frogs": "tcu",
+    "arizona wildcats": "arizona",
+    "byu cougars": "byu",
+    "utah utes": "utah",
+    "iowa state cyclones": "iowa st",
+    "baylor bears": "baylor",
+    "florida state seminoles": "florida st",
+    "boston college eagles": "boston college",
+    "clemson tigers": "clemson",
+    "syracuse orange": "syracuse",
+    "oklahoma state cowboys": "oklahoma st",
+    "kansas state wildcats": "kansas st",
+    "ucla bruins": "ucla",
+    "minnesota golden gophers": "minnesota",
+    "texas longhorns": "texas",
+    "missouri tigers": "missouri",
+    "ole miss rebels": "ole miss",
+    "lsu tigers": "lsu",
+    "usc trojans": "usc",
+    "ucf knights": "ucf",
+    "pittsburgh panthers": "pittsburgh",
+    "james madison dukes": "james madison",
+    "southern mississippi golden eagles": "southern miss",
+    "toledo rockets": "toledo",
+    "sacramento state hornets": "sacramento st",
+    "colorado buffaloes": "colorado",
+    "georgia bulldogs": "georgia",
+    "alabama crimson tide": "alabama",
+    "tennessee volunteers": "tennessee",
+    "michigan wolverines": "michigan",
+    "penn state nittany lions": "penn st",
+    "ohio state buckeyes": "ohio st",
+    "miami hurricanes": "miami",
+    "oregon ducks": "oregon",
+    "washington huskies": "washington",
+    "wisconsin badgers": "wisconsin",
+    "indiana hoosiers": "indiana",
+    "rutgers scarlet knights": "rutgers",
+    "maryland terrapins": "maryland"
+}
+
 
 def fetch_nfl_stats():
     """Calculates Success Rate and YPG via nflreadpy, then overwrites EPA and PPG with nfelo's opponent-adjusted HTML data."""
@@ -430,11 +478,21 @@ def fetch_cfb_stats():
                         
                         # --- NEW: Save the Net EPA Rank ---
                         stats_map[target_key]["net_epa_rank"] = f"{int(row['net_epa_rk'])}"
+        # --- NEW: Save the Net EPA Rank ---
+                        stats_map[target_key]["net_epa_rank"] = f"{int(row['net_epa_rk'])}"
+
+        # --- NEW: Inject aliases directly into the dictionary ---
+        for alias_key, cfb_key in NCAAF_ALIASES.items():
+            if cfb_key in stats_map:
+                stats_map[alias_key] = stats_map[cfb_key]
+            elif cfb_key.replace(" st", " state") in stats_map:
+                stats_map[alias_key] = stats_map[cfb_key.replace(" st", " state")]
 
         return stats_map
     except Exception as e:
         print(f"⚠️ Error calculating CFB metrics: {e}")
         return {}
+
 
 
 def fetch_all_league_stats(league):
@@ -501,11 +559,24 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
         away_data = global_stats.get(away_lower.split()[-1], {})
         home_data = global_stats.get(home_lower.split()[-1], {})
     else:
-        for k, v in global_stats.items():
-            if k in away_lower or away_lower in k:
-                away_data = v
-            if k in home_lower or home_lower in k:
-                home_data = v
+        # --- NEW: Check Aliases first for perfect matching ---
+        resolved_away = NCAAF_ALIASES.get(away_lower.strip(), away_lower.strip())
+        resolved_home = NCAAF_ALIASES.get(home_lower.strip(), home_lower.strip())
+        
+        away_data = global_stats.get(resolved_away) or global_stats.get(resolved_away.replace("state", "st"), {})
+        home_data = global_stats.get(resolved_home) or global_stats.get(resolved_home.replace("state", "st"), {})
+
+        # Fallback loop if direct lookup misses
+        if not away_data:
+            for k, v in global_stats.items():
+                if k in away_lower or away_lower in k:
+                    away_data = v
+                    break
+        if not home_data:
+            for k, v in global_stats.items():
+                if k in home_lower or home_lower in k:
+                    home_data = v
+                    break
 
     if not away_data and not home_data:
         return ""

@@ -85,7 +85,12 @@ NCAAB_ALIASES = {
     "umkc kangaroos": "kansas city",
     "washington st cougars": "washington st.",
     "wright st raiders": "wright st.",
-    "youngstown st penguins": "youngstown st."
+    "youngstown st penguins": "youngstown st.",
+    "sam houston st bearkats": "sam houston st.",
+    "cleveland st vikings": "cleveland st.",
+    "arkansas-pine bluff golden lions": "arkansas pine bluff",
+    "north florida ospreys": "north florida",
+    "cal baptist lancers": "california baptist"
 }
 
 def _clean_team_key(name):

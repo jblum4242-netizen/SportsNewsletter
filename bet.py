@@ -1206,7 +1206,10 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
     mascot = t_lower.split()[-1]
     
     # Regional and directional modifiers that shouldn't be ignored
-    modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh"]
+    # Regional and directional modifiers that shouldn't be ignored
+    modifiers = [
+        "eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", "east", "west", "pine bluff", "cal"
+        ]
 
     for key, metrics in league_data.items():
         k_lower = key.lower()
