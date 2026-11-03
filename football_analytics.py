@@ -57,7 +57,21 @@ NCAAF_ALIASES = {
     "wisconsin badgers": "wisconsin",
     "indiana hoosiers": "indiana",
     "rutgers scarlet knights": "rutgers",
-    "maryland terrapins": "maryland"
+    "maryland terrapins": "maryland",
+    "appalachian state mountaineers": "app state",
+    "florida state seminoles": "florida st",
+    "hawaii rainbow warriors": "hawaii",
+    "iowa state cyclones": "iowa st",
+    "kansas state wildcats": "kansas st",
+    "louisiana ragin cajuns": "louisiana",
+    "ohio state buckeyes": "ohio st",
+    "oklahoma state cowboys": "oklahoma st",
+    "penn state nittany lions": "penn st",
+    "sacramento state hornets": "sacramento st",
+    "sam houston state bearkats": "sam houston",
+    "san jose state spartans": "san jos",
+    "southern mississippi golden eagles": "southern miss",
+    "umass minutemen": "massachusetts"
 }
 
 
@@ -410,7 +424,7 @@ def fetch_cfb_stats():
             print("🧮 Fetching Opponent-Adjusted stats from CFBD API...")
             headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
             api_url = f"https://api.collegefootballdata.com/stats/season/advanced?year={current_year}"
-            res = requests.get(api_url, headers=headers, timeout=15)
+            res = requests.get(api_url, headers=headers, timeout=30)
 
             if res.status_code == 200:
                 cfbd_data = res.json()
@@ -481,12 +495,21 @@ def fetch_cfb_stats():
         # --- NEW: Save the Net EPA Rank ---
                         stats_map[target_key]["net_epa_rank"] = f"{int(row['net_epa_rk'])}"
 
-        # --- NEW: Inject aliases directly into the dictionary ---
+        # --- NEW: Inject aliases directly into the dictionary (FUZZY MATCH) ---
         for alias_key, cfb_key in NCAAF_ALIASES.items():
-            if cfb_key in stats_map:
-                stats_map[alias_key] = stats_map[cfb_key]
-            elif cfb_key.replace(" st", " state") in stats_map:
-                stats_map[alias_key] = stats_map[cfb_key.replace(" st", " state")]
+            for k in list(stats_map.keys()):
+                # Strip hidden periods or apostrophes (e.g. "Florida St." or "Hawai'i")
+                clean_k = k.replace(".", "").replace("'", "").replace("state", "st").strip()
+                clean_target = cfb_key.replace(".", "").replace("'", "").replace("state", "st").strip()
+                
+                # Catch UMass vs Massachusetts edge case
+                if "massachusetts" in clean_target and "umass" in clean_k:
+                    stats_map[alias_key] = stats_map[k]
+                    break
+                    
+                if clean_k == clean_target or clean_target in clean_k or clean_k in clean_target:
+                    stats_map[alias_key] = stats_map[k]
+                    break
 
         return stats_map
     except Exception as e:
@@ -560,21 +583,31 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
         home_data = global_stats.get(home_lower.split()[-1], {})
     else:
         # --- NEW: Check Aliases first for perfect matching ---
-        resolved_away = NCAAF_ALIASES.get(away_lower.strip(), away_lower.strip())
-        resolved_home = NCAAF_ALIASES.get(home_lower.strip(), home_lower.strip())
+        away_clean = away_lower.strip()
+        home_clean = home_lower.strip()
         
-        away_data = global_stats.get(resolved_away) or global_stats.get(resolved_away.replace("state", "st"), {})
-        home_data = global_stats.get(resolved_home) or global_stats.get(resolved_home.replace("state", "st"), {})
+        # 1. Check if the full Odds API name was successfully injected
+        away_data = global_stats.get(away_clean)
+        home_data = global_stats.get(home_clean)
+        
+        # 2. Fallback to the resolved alias target just in case
+        if not away_data:
+            resolved_away = NCAAF_ALIASES.get(away_clean, away_clean)
+            away_data = global_stats.get(resolved_away) or global_stats.get(resolved_away.replace("state", "st"), {})
+            
+        if not home_data:
+            resolved_home = NCAAF_ALIASES.get(home_clean, home_clean)
+            home_data = global_stats.get(resolved_home) or global_stats.get(resolved_home.replace("state", "st"), {})
 
-        # Fallback loop if direct lookup misses
+        # 3. Final substring fallback
         if not away_data:
             for k, v in global_stats.items():
-                if k in away_lower or away_lower in k:
+                if k in away_clean or away_clean in k:
                     away_data = v
                     break
         if not home_data:
             for k, v in global_stats.items():
-                if k in home_lower or home_lower in k:
+                if k in home_clean or home_clean in k:
                     home_data = v
                     break
 
@@ -671,24 +704,64 @@ def build_matchup_stats_html(away_team, home_team, league, global_stats):
 
 
 # --- TEST BLOCK ---
-if __name__ == '__main__':
-    print("🚀 Booting up Native Football Stats Module...\n")
-
-    nfl_global_stats = fetch_all_league_stats("NFL")
-    cfb_global_stats = fetch_all_league_stats("NCAAF")
-
-    test_matchups = [
-        ("Philadelphia Eagles", "Chicago Bears", "NFL", nfl_global_stats),
-        ("Indiana Hoosiers", "Ohio State Buckeyes", "NCAAF", cfb_global_stats)
-    ]
-
-    full_html = "<div style='max-width: 800px; margin: auto;'>"
-    for away, home, league, global_dict in test_matchups:
-        html_block = build_matchup_stats_html(away, home, league, global_dict)
-        full_html += f"<h3 style='font-family: sans-serif; text-align: center;'>{league} Matchup</h3>" + html_block
-    full_html += "</div>"
-
-    with open("test_matchups.html", "w", encoding="utf-8") as f:
-        f.write(full_html)
-
-    print("\n✅ Native module execution complete. Open 'test_matchups.html' in your folder to view the visually rendered tables!")
+# --- STANDALONE TEST BLOCK ---
+if __name__ == "__main__":
+    import json
+    import os
+    print("🚀 Booting up CFB Mapping Auditor...\n")
+    
+    # 1. Load the NCAAF Analytics Dictionary
+    cfb_stats = fetch_all_league_stats("NCAAF")
+    
+    # 2. Load the raw Odds API names from your local cache
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    odds_cache_path = os.path.join(base_dir, "raw_odds_cache.json")
+    
+    if not os.path.exists(odds_cache_path):
+        print("⚠️ raw_odds_cache.json not found! Run bet.py once to generate it.")
+    else:
+        with open(odds_cache_path, "r", encoding="utf-8") as f:
+            odds_data = json.load(f)
+            
+        # 3. Use the raw un-filtered NCAAF games to catch everything
+        ncaaf_odds = odds_data.get("NCAAF", [])
+        
+        unmapped_teams = set()
+        mapped_count = 0
+        
+        # 4. Test every single team in the Odds API feed
+        for game in ncaaf_odds:
+            away = game.get("away_team", "")
+            home = game.get("home_team", "")
+            
+            for team in [away, home]:
+                if team:
+                    team_lower = team.lower().strip()
+                    
+                    # Mimic the smarter bet.py lookup logic
+                    found = cfb_stats.get(team_lower)
+                    
+                    if not found:
+                        resolved = NCAAF_ALIASES.get(team_lower, team_lower.replace("state", "st"))
+                        found = cfb_stats.get(resolved) or cfb_stats.get(resolved.replace("state", "st"))
+                        
+                    if not found:
+                        for k, v in cfb_stats.items():
+                            if k in team_lower or team_lower in k:
+                                found = v
+                                break
+                    
+                    if not found:
+                        unmapped_teams.add(team)
+                    else:
+                        mapped_count += 1
+                        
+        # 5. Output the results
+        print(f"✅ Successfully mapped {mapped_count} team instances.")
+        if unmapped_teams:
+            print(f"❌ Failed to map {len(unmapped_teams)} unique teams.\n")
+            print("Copy and paste these into your NCAAF_ALIASES dictionary:")
+            for t in sorted(unmapped_teams):
+                print(f'    "{t.lower()}": "???",')
+        else:
+            print("🎉 All Odds API teams perfectly mapped!")
