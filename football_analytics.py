@@ -51,7 +51,7 @@ NCAAF_ALIASES = {
     "michigan wolverines": "michigan",
     "penn state nittany lions": "penn st",
     "ohio state buckeyes": "ohio st",
-    "miami hurricanes": "miami",
+   "miami hurricanes": "miami (fl)",
     "oregon ducks": "oregon",
     "washington huskies": "washington",
     "wisconsin badgers": "wisconsin",
@@ -469,6 +469,10 @@ def fetch_cfb_stats():
                     team_raw = str(row.get('team', '')).lower()
                     team_clean = team_raw.replace("state", "st")
 
+                    # --- PREVENT CFBD "MIAMI" FROM MERGING INTO "MIAMI (OH)" ---
+                    if team_clean == "miami":
+                        team_clean = "miami (fl)"
+
                     target_key = None
                     if team_clean in stats_map:
                         target_key = team_clean
@@ -476,6 +480,9 @@ def fetch_cfb_stats():
                         target_key = team_raw
                     else:
                         for k in stats_map:
+                            # Anti-greedy safeguard
+                            if "miami" in team_clean and "oh" in k and "oh" not in team_clean:
+                                continue
                             if k in team_clean or team_clean in k or k in team_raw or team_raw in k:
                                 target_key = k
                                 break
@@ -500,8 +507,6 @@ def fetch_cfb_stats():
                         stats_map[target_key]["def_success_rank"] = f"{int(row['def_sr_rk'])}"
                         
                         # --- NEW: Save the Net EPA Rank ---
-                        stats_map[target_key]["net_epa_rank"] = f"{int(row['net_epa_rk'])}"
-        # --- NEW: Save the Net EPA Rank ---
                         stats_map[target_key]["net_epa_rank"] = f"{int(row['net_epa_rk'])}"
 
         # --- NEW: Inject aliases directly into the dictionary (TWO-PASS FUZZY MATCH) ---
