@@ -71,7 +71,16 @@ NCAAF_ALIASES = {
     "sam houston state bearkats": "sam houston",
     "san jose state spartans": "san jos",
     "southern mississippi golden eagles": "southern miss",
-    "umass minutemen": "massachusetts"
+    "umass minutemen": "massachusetts",
+    "mississippi state bulldogs": "mississippi st",
+    "boise state broncos": "boise st",
+    "colorado state rams": "colorado st",
+    "kentucky wildcats": "kentucky",
+    "arizona state sun devils": "arizona st",
+    "northwestern wildcats": "northwestern",
+    "michigan state spartans": "michigan st",
+    "florida gators": "florida",
+    "new mexico state aggies": "new mexico st",
 }
 
 
@@ -495,19 +504,32 @@ def fetch_cfb_stats():
         # --- NEW: Save the Net EPA Rank ---
                         stats_map[target_key]["net_epa_rank"] = f"{int(row['net_epa_rk'])}"
 
-        # --- NEW: Inject aliases directly into the dictionary (FUZZY MATCH) ---
+        # --- NEW: Inject aliases directly into the dictionary (TWO-PASS FUZZY MATCH) ---
         for alias_key, cfb_key in NCAAF_ALIASES.items():
+            clean_target = cfb_key.replace(".", "").replace("'", "").replace("state", "st").strip()
+            
+            # PASS 1: Look for an exact match first (prevents "Miami" from matching "Miami OH")
+            exact_match_found = False
             for k in list(stats_map.keys()):
-                # Strip hidden periods or apostrophes (e.g. "Florida St." or "Hawai'i")
                 clean_k = k.replace(".", "").replace("'", "").replace("state", "st").strip()
-                clean_target = cfb_key.replace(".", "").replace("'", "").replace("state", "st").strip()
+                if clean_k == clean_target:
+                    stats_map[alias_key] = stats_map[k]
+                    exact_match_found = True
+                    break
+            
+            if exact_match_found:
+                continue
+                
+            # PASS 2: Fallback to substring match for tricky names (UMass, App State)
+            for k in list(stats_map.keys()):
+                clean_k = k.replace(".", "").replace("'", "").replace("state", "st").strip()
                 
                 # Catch UMass vs Massachusetts edge case
                 if "massachusetts" in clean_target and "umass" in clean_k:
                     stats_map[alias_key] = stats_map[k]
                     break
                     
-                if clean_k == clean_target or clean_target in clean_k or clean_k in clean_target:
+                if clean_target in clean_k or clean_k in clean_target:
                     stats_map[alias_key] = stats_map[k]
                     break
 
