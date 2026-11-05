@@ -433,7 +433,7 @@ def fetch_cfb_stats():
             print("🧮 Fetching Opponent-Adjusted stats from CFBD API...")
             headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
             api_url = f"https://api.collegefootballdata.com/stats/season/advanced?year={current_year}"
-            res = requests.get(api_url, headers=headers, timeout=30)
+            res = requests.get(api_url, headers=headers, timeout=45)
 
             if res.status_code == 200:
                 cfbd_data = res.json()

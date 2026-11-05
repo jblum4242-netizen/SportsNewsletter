@@ -90,7 +90,9 @@ NCAAB_ALIASES = {
     "cleveland st vikings": "cleveland st.",
     "arkansas-pine bluff golden lions": "arkansas pine bluff",
     "north florida ospreys": "north florida",
-    "cal baptist lancers": "california baptist"
+    "cal baptist lancers": "california baptist",
+    "delaware st hornets": "delaware st.",
+    "pennsylvania quakers": "penn"   
 }
 
 def _clean_team_key(name):
