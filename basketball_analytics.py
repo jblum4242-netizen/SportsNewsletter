@@ -255,7 +255,6 @@ def fetch_nba_stats():
                 entry = {
                     "rank": f"{int(row['rank'])}",
                     "net_rtg": f"{row['NRtg']:+.1f}",
-                    "record": f"{row.get('W', 0)}-{row.get('L', 0)}",
                     "adj_oe": f"{row['ORtg']:.1f}", "adj_oe_rk": f"{int(row['adj_oe_rk'])}",
                     "adj_de": f"{row['DRtg']:.1f}", "adj_de_rk": f"{int(row['adj_de_rk'])}",
                     "tempo": f"{row['Pace']:.1f}", "tempo_rk": f"{int(row['tempo_rk'])}",
@@ -349,6 +348,7 @@ def fetch_ncaab_stats():
                 entry = {
                     "rank": f"{int(row.get('RankAdjEM', 999))}",
                     "net_rtg": f"{row.get('AdjEM', 0.0):+.2f}",
+                    "record": f"{row.get('Wins', 0)}-{row.get('Losses', 0)}",
                     "adj_oe": f"{row.get('AdjOE', 0.0):.1f}", "adj_oe_rk": f"{int(row.get('RankAdjOE', 0))}",
                     "adj_de": f"{row.get('AdjDE', 0.0):.1f}", "adj_de_rk": f"{int(row.get('RankAdjDE', 0))}",
                     "tempo": f"{row.get('AdjTempo', 0.0):.1f}", "tempo_rk": f"{int(row.get('RankAdjTempo', 0))}",
@@ -657,48 +657,28 @@ def build_basketball_matchup_html(away_team, home_team, league, global_stats):
 
 
 # --- STANDALONE TEST BLOCK ---
+# --- STANDALONE TEST BLOCK ---
 if __name__ == "__main__":
     import json
     import os
+    import requests
     print("🚀 Booting up KenPom Mapping Auditor...\n")
     
+    # --- NEW: PEEK AT RAW KENPOM KEYS ---
+    print("🔍 Checking raw KenPom data structure for Syracuse...")
+    headers = {"Authorization": f"Bearer {KENPOM_API_KEY}"}
+    test_res = requests.get("https://kenpom.com/api.php?endpoint=ratings&y=2027", headers=headers)
+    if test_res.status_code == 200:
+        for row in test_res.json():
+            if "Syracuse" in str(row.get("TeamName", "")):
+                print(f"\nSYRACUSE RAW KEYS: {list(row.keys())}\n")
+                break
+
     # 1. Load the KenPom Dictionary
     ncaab_stats = fetch_all_basketball_stats("NCAAB")
     
-    # 2. Load the raw Odds API names from your local cache
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    odds_cache_path = os.path.join(base_dir, "raw_odds_cache.json")
-    
-    if not os.path.exists(odds_cache_path):
-        print("⚠️ raw_odds_cache.json not found! Run bet.py once to generate it.")
-    else:
-        with open(odds_cache_path, "r", encoding="utf-8") as f:
-            odds_data = json.load(f)
-            
-        ncaab_odds = odds_data.get("NCAAB", [])
-        
-        unmapped_teams = set()
-        mapped_count = 0
-        
-        # 3. Test every single team in the Odds API feed
-        for game in ncaab_odds:
-            away = game.get("away_team")
-            home = game.get("home_team")
-            
-            for team in [away, home]:
-                if team:
-                    stats = _lookup_team_stats(team, "NCAAB", ncaab_stats)
-                    if not stats:
-                        unmapped_teams.add(team)
-                    else:
-                        mapped_count += 1
-                        
-        # 4. Output the results
-        print(f"✅ Successfully mapped {mapped_count} team instances.")
-        if unmapped_teams:
-            print(f"❌ Failed to map {len(unmapped_teams)} unique teams.\n")
-            print("Copy and paste these into your NCAAB_ALIASES dictionary, and add the KenPom names:")
-            for t in sorted(unmapped_teams):
-                print(f'    "{t.lower()}": "???",')
-        else:
-            print("🎉 All Odds API teams perfectly mapped to KenPom!")
+    # 2. Quick Test Print 
+    syracuse_data = ncaab_stats.get("syracuse", {})
+    indiana_data = ncaab_stats.get("indiana", {})
+    print(f"🧪 TEST SU RECORD -> Syracuse: {syracuse_data.get('record', 'MISSING')}")
+    print(f"🧪 TEST SU RECORD -> Indiana: {indiana_data.get('record', 'MISSING')}\n")
