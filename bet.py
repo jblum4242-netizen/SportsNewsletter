@@ -1274,6 +1274,13 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
         
         matchup_text = g['matchup']
         is_marquee = False
+        
+        is_my_team = False
+        my_squads = ["76ers", "eagles", "tottenham", "delaware", "ucla", "phillies", "flyers"]
+        if any(squad in matchup_text.lower() for squad in my_squads):
+            is_my_team = True
+            
+        league_key = g['league'].upper()
         league_key = g['league'].upper()
 
         # --- RANK INJECTION & MARQUEE CHECK ---
@@ -1320,9 +1327,16 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
             
         league_badge = f"<td style='padding: 8px 10px; color: #2563eb; font-weight: 700; width: 12%;'>[{g['league']}]</td>" if show_league_badge else ""
         
-        # Marquee styling
-        row_bg = "#fffbeb" if is_marquee else "transparent"
-        text_style = "color: #0f172a; font-weight: 800;" if is_marquee else "color: #1e293b;"
+        # --- FIX: Prioritize "My Teams" highlight over standard Marquee games ---
+        if is_my_team:
+            row_bg = "#eff6ff"  # Soft blue background
+            text_style = "color: #1e3a8a; font-weight: 900;" # Deep blue bold text
+        elif is_marquee:
+            row_bg = "#fffbeb"  # Soft yellow background
+            text_style = "color: #0f172a; font-weight: 800;"
+        else:
+            row_bg = "transparent"
+            text_style = "color: #1e293b;"
         
         chtml += f"<tr style='border-bottom: 1px solid #f1f5f9; background-color: {row_bg};'><td style='padding: 8px 10px; color: #475569; font-weight: 700; width: 22%;'>{g['time']}</td>{league_badge}<td style='padding: 8px 10px; {text_style}'>{matchup_display}</td></tr>"
         
