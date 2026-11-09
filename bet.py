@@ -1275,8 +1275,17 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
         matchup_text = g['matchup']
         is_marquee = False
         
+        # --- FIX: Use exact full names to prevent College/Pro mascot collisions ---
         is_my_team = False
-        my_squads = ["76ers", "eagles", "tottenham", "delaware", "ucla", "phillies", "flyers"]
+        my_squads = [
+            "76ers", 
+            "philadelphia eagles", 
+            "tottenham", 
+            "delaware blue hens", 
+            "ucla", 
+            "phillies", 
+            "philadelphia flyers"
+        ]
         if any(squad in matchup_text.lower() for squad in my_squads):
             is_my_team = True
             
