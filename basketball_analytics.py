@@ -92,6 +92,8 @@ NCAAB_ALIASES = {
     "north florida ospreys": "north florida",
     "cal baptist lancers": "california baptist",
     "delaware st hornets": "delaware st.",
+    "grambling st tigers": "grambling st.",
+    "appalachian st mountaineers": "appalachian st.",
     "pennsylvania quakers": "penn"   
 }
 
@@ -253,6 +255,7 @@ def fetch_nba_stats():
                 entry = {
                     "rank": f"{int(row['rank'])}",
                     "net_rtg": f"{row['NRtg']:+.1f}",
+                    "record": f"{row.get('W', 0)}-{row.get('L', 0)}",
                     "adj_oe": f"{row['ORtg']:.1f}", "adj_oe_rk": f"{int(row['adj_oe_rk'])}",
                     "adj_de": f"{row['DRtg']:.1f}", "adj_de_rk": f"{int(row['adj_de_rk'])}",
                     "tempo": f"{row['Pace']:.1f}", "tempo_rk": f"{int(row['tempo_rk'])}",
