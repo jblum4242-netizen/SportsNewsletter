@@ -935,6 +935,7 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
         home_team = game.get("home_team", "Home Team")
         away_team = game.get("away_team", "Away Team")
         
+        # --- ADD W/L RECORD LOGIC HERE ---
         def get_rec(t_name):
             t_lower = t_name.lower()
             
@@ -949,28 +950,11 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
                         return v
                 return ""
 
-            # --- NEW: Pull NCAAB records directly from KenPom global_stats ---
+            # --- FIX: Use our bulletproof mapping engine to grab the record ---
             if league.upper() == "NCAAB" and global_stats and "NCAAB" in global_stats:
-                su = ""
-                # Attempt alias lookup first
-                from basketball_analytics import NCAAB_ALIASES, _clean_team_key
-                t_clean = _clean_team_key(re.sub(r"^\(\d+\)\s*", "", t_name))
-                
-                # Check alias mapping
-                for alias_k, kp_v in NCAAB_ALIASES.items():
-                    if t_clean.startswith(alias_k):
-                        kp_hit = global_stats["NCAAB"].get(kp_v.lower())
-                        if kp_hit:
-                            su = kp_hit.get("record", "")
-                            break
-                            
-                # Fallback to direct lookup
-                if not su:
-                    kp_hit = global_stats["NCAAB"].get(t_clean)
-                    if kp_hit:
-                        su = kp_hit.get("record", "")
+                kp_data = basketball_analytics._lookup_team_stats(t_name, "NCAAB", global_stats["NCAAB"])
+                su = kp_data.get("record", "") if kp_data else ""
             else:
-                # Default logic for other sports using ESPN scraper
                 su = find_match(su_data)
                 
             ats = find_match(ats_data)
