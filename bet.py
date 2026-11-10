@@ -608,6 +608,11 @@ def filter_college_games(odds_games, league, global_stats=None):
                         full_name = f"{loc} {mascot}".strip().lower()
                         top_25_teams[full_name] = current_rank
                         
+                        # --- FIX: Store a "St" and "St." variation so the Odds API matches it ---
+                        if "state" in full_name:
+                            top_25_teams[full_name.replace("state", "st")] = current_rank
+                            top_25_teams[full_name.replace("state", "st.")] = current_rank
+                        
                 break 
     except Exception as e:
         print(f"⚠️ Could not fetch Top 25 {league} rankings: {e}")
@@ -641,7 +646,7 @@ def filter_college_games(odds_games, league, global_stats=None):
 
         away_rank_str = ""
         home_rank_str = ""
-        modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st", "tech", "a&m", "ohio"]
+        modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st", "tech", "a&m", "ohio", "christian"]
         
         for t_name, t_rank in top_25_teams.items():
             # Anti-greedy check so directional schools don't inherit base school AP ranks
@@ -1211,7 +1216,7 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
     # Regional and directional modifiers that shouldn't be ignored
     # Regional and directional modifiers that shouldn't be ignored
     modifiers = [
-        "eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", "east", "west", "pine bluff", "cal"
+        "eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", "east", "west", "pine bluff", "cal", "christian"
         ]
 
     for key, metrics in league_data.items():
