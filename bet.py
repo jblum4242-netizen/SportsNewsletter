@@ -1947,7 +1947,8 @@ def build_sports_briefings():
         <meta name="apple-mobile-web-app-title" content="Sports Slate">
         
         <!-- Retro Arcade Neon Custom iOS Home Screen Icon -->
-        <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=3">
+        <link rel="icon" type="image/png" sizes="180x180" href="apple-touch-icon.png?v=5">
+        <link rel="manifest" href="manifest.json">
         <title>Sports NewsLetter</title>
         <style>
             body {{
