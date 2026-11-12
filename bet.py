@@ -331,6 +331,8 @@ def fetch_covers_injuries(team_name, league):
     
     if "NBA" in league_upper:
         sport, lg = "basketball", "nba"
+    elif "NCAAB" in league_upper:
+        sport, lg = "basketball", "ncaab"
     elif "MLB" in league_upper:
         sport, lg = "baseball", "mlb"
     elif "NHL" in league_upper:
@@ -1211,27 +1213,35 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
         return "", 999
 
     # --- NHL, NFL, NCAAF, NCAAB (American Mascots) ---
-    mascot = t_lower.split()[-1]
+    mascot = t_lower.split()[-1] if t_lower else ""
     
     # Regional and directional modifiers that shouldn't be ignored
-    # Regional and directional modifiers that shouldn't be ignored
     modifiers = [
-        "eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", "east", "west", "pine bluff", "cal", "christian","atlantic", "arkansas"
-        ]
+        "eastern", "western", "central", "northern", "southern", "gulf", "middle", 
+        "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", 
+        "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas"
+    ]
+
+    # --- 1. CLEAN THE ODDS API NAME EXACTLY ONCE ---
+    # Use strict word boundaries so "St." changes to "State", but "State" doesn't mutate
+    t_lower = re.sub(r'\bst\.?\b', 'state', t_lower)
+    
+    if t_lower in ["unc", "n carolina", "n. carolina"]:
+        t_lower = "north carolina"
+    elif t_lower == "ku":
+        t_lower = "kansas"
 
     for key, metrics in league_data.items():
-        k_lower = key.lower()
+        k_lower = key.lower().strip()
         match_found = False
         
-        # --- NEW: Equalize abbreviations before matching ---
-        k_lower = k_lower.replace(" st.", " state").replace(" st", " state")
-        t_lower = t_lower.replace(" st.", " state").replace(" st", " state")
+        # --- 2. CLEAN THE DICTIONARY KEY THE EXACT SAME WAY ---
+        k_lower = re.sub(r'\bst\.?\b', 'state', k_lower)
         
-        if k_lower == "unc" or k_lower == "n carolina": 
+        if k_lower in ["unc", "n carolina", "n. carolina"]:
             k_lower = "north carolina"
-        if t_lower == "unc" or t_lower == "n carolina": 
-            t_lower = "north carolina"
-        # -------------------------------------------------
+        elif k_lower == "ku":
+            k_lower = "kansas"
 
         # 1. Exact Match or Mascot Match
         if k_lower == t_lower or (len(mascot) > 3 and k_lower == mascot):
@@ -1250,7 +1260,7 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
                         
         # 3. Reverse substring match
         elif t_lower in k_lower:
-             if re.search(rf'\b{re.escape(t_lower)}\b', k_lower):
+            if re.search(rf'\b{re.escape(t_lower)}\b', k_lower):
                 match_found = True
                 for mod in modifiers:
                     if re.search(rf'\b{re.escape(mod)}\b', k_lower) and not re.search(rf'\b{re.escape(mod)}\b', t_lower):
@@ -1259,7 +1269,7 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
 
         if match_found:
             rk = metrics.get("net_epa_rank") or metrics.get("rank")
-            if rk and str(rk) not in ["99", "-", ""]:
+            if rk and str(rk) not in ["-", ""]:
                 return format_badge(rk), int(rk)
                 
     return "", 999
