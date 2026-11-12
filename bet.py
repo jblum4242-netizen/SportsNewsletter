@@ -1947,6 +1947,7 @@ def build_sports_briefings():
         <meta name="apple-mobile-web-app-title" content="Sports Slate">
         
         <!-- Retro Arcade Neon Custom iOS Home Screen Icon -->
+        <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=5">
         <link rel="icon" type="image/png" sizes="180x180" href="apple-touch-icon.png?v=5">
         <link rel="manifest" href="manifest.json">
         <title>Sports NewsLetter</title>
@@ -2164,6 +2165,18 @@ def build_sports_briefings():
                 }}
                 switchTab(currentHash);
             }});
+        </script>
+        <script>
+            // Only rewrite external links when running inside the standalone iOS Home Screen app
+            if (window.navigator.standalone === true) {{
+                document.addEventListener('click', function(e) {{
+                    const link = e.target.closest('a');
+                    if (link && link.href && link.href.startsWith('https://') && !link.href.includes('jblum4242-netizen.github.io')) {{
+                        e.preventDefault();
+                        window.location.href = link.href.replace(/^https:\/\//i, 'x-safari-https://');
+                    }}
+                }});
+            }}
         </script>
     </body>
     </html>"""   
