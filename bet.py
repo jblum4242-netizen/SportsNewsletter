@@ -15,6 +15,8 @@ from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 from googlenewsdecoder import gnewsdecoder
 import subprocess
+import pandas as pd
+import io
 
 from epl_analytics import fetch_epl_xg_form, fetch_epl_head_to_head, fetch_epl_injuries, fetch_epl_team_metrics, fetch_epl_xpts_rankings
 
@@ -34,7 +36,6 @@ ODDS_API_KEY = "c309fe5bbfddf608017dafd09997ee95"
 
 def get_active_leagues():
     """Dynamically returns leagues that are currently in season based on the current date."""
-    import datetime
     now = datetime.datetime.now()
     month = now.month
     
@@ -251,7 +252,6 @@ def fetch_game_previews(away_team, home_team, max_articles=3):
     return articles
 
 def fetch_covers_consensus(league):
-    import re
     consensus_list = []
     league_str = league.lower()
     
@@ -263,7 +263,6 @@ def fetch_covers_consensus(league):
     try:
         res = requests.get(url, headers=headers, timeout=12)
         if res.status_code == 200:
-            from bs4 import BeautifulSoup
             soup = BeautifulSoup(res.text, "html.parser")
             
             rows = soup.find_all("tr")
@@ -323,10 +322,6 @@ def fetch_covers_consensus(league):
     return consensus_list
 
 def fetch_covers_injuries(team_name, league):
-    import requests
-    import time
-    from bs4 import BeautifulSoup
-    
     league_upper = league.upper()
     
     if "NBA" in league_upper:
@@ -344,9 +339,24 @@ def fetch_covers_injuries(team_name, league):
     else:
         return []
 
-    slug = team_name.lower().replace(" ", "-")
+    # --- Clean team_name into a valid Covers URL slug ---
+    clean_name = team_name.lower().strip()
+    
+    # 1. Strip any leading ranking badges if present, e.g. "(12) " or "[AP 5] "
+    clean_name = re.sub(r'^(\[.*?\]|\(\d+\))\s*', '', clean_name)
+    
+    # 2. Expand "st" / "st." to "state" (except when at the very start like "St. John's")
+    clean_name = re.sub(r'(?<!^)\bst\.?\b', 'state', clean_name)
+    
+    # 3. Replace '&' with '-' so "Texas A&M" becomes "texas-a-m" instead of "texas-am"
+    clean_name = clean_name.replace("&", "-")
+    
+    # 4. Remove remaining punctuation (periods, apostrophes, parentheses) and hyphenate
+    clean_name = re.sub(r"['\.()]", "", clean_name)
+    slug = re.sub(r"[\s\-]+", "-", clean_name).strip("-")
+    
     url = f"https://www.covers.com/sport/{sport}/{lg}/teams/main/{slug}/injuries"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
     injuries = []
     time.sleep(0.5) 
     
@@ -586,8 +596,6 @@ def fetch_phillies_7_day_schedule():
 
 def filter_college_games(odds_games, league, global_stats=None):
     """Filters NCAAF and NCAAB games to Top 25 teams, Power Conference Head-to-Heads, and Delaware."""
-    import requests
-    import re
     
     # 1. Fetch the actual AP Top 25 Rankings directly from ESPN
     espn_sport = "basketball/mens-college-basketball" if league.upper() == "NCAAB" else "football/college-football"
@@ -648,7 +656,11 @@ def filter_college_games(odds_games, league, global_stats=None):
 
         away_rank_str = ""
         home_rank_str = ""
-        modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st", "tech", "a&m", "ohio", "christian","atlantic", "arkansas"]
+        modifiers = [
+        "eastern", "western", "central", "northern", "southern", "gulf", "middle", 
+        "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", 
+        "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas"
+        ]
         
         for t_name, t_rank in top_25_teams.items():
             # Anti-greedy check so directional schools don't inherit base school AP ranks
@@ -711,11 +723,6 @@ def filter_college_games(odds_games, league, global_stats=None):
     return filtered_games
 
 def fetch_last_5_games(team_name, league):
-    import unicodedata
-    import time
-    import requests
-    import re
-    from bs4 import BeautifulSoup
 
     # Strip leading spaces and chop off any ranking prefix like "(5) "
     clean_team_name = re.sub(r'^\(\d+\)\s*', '', team_name.strip())
@@ -1186,7 +1193,6 @@ def format_consensus(consensus_str):
         return consensus_str
 
 def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="font-size: 10px; color: #64748b; font-weight: 700;"):
-    import re
     t_lower = team_str.lower().strip()
     league_data = (global_stats or {}).get(lg.upper(), {})
 
@@ -1328,7 +1334,7 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
                 home_badge, home_val = get_league_badge_and_val(home_raw, league_key, global_stats, fmt=badge_format, style="")
                 
                 # Regex to flip the AP rank to [AP 1] and insert KenPom/EPA as (2)
-                import re
+
                 def format_ranks(raw_team, analytics_badge):
                     match = re.match(r'^\((\d+)\)\s*(.*)', raw_team)
                     if match:
@@ -1395,8 +1401,7 @@ def check_and_clear_scheduled_cache(cache_file="raw_odds_cache.json"):
 
 def fetch_espn_records(league):
     """Pulls SU records. Uses multiple endpoints to catch off-days and unranked CFB teams."""
-    import datetime
-    import requests
+
     records_map = {}
     sport_path = ESPN_SPORT_MAP.get(league.lower())
     if not sport_path: return records_map
@@ -1451,9 +1456,6 @@ def fetch_espn_records(league):
 
 def fetch_ats_records(league):
     """Pulls ATS / Run Line records seamlessly via pandas with a masked User-Agent."""
-    import pandas as pd
-    import io
-    import requests
     
     records = {}
     url_map = {
@@ -1533,7 +1535,7 @@ def build_sports_briefings():
     cache_is_fresh = False
 
     # 1. Wipe cache during 7:00 AM / 5:52 PM windows, OR if '--refresh' is passed in terminal
-    import sys
+
     if "--refresh" in sys.argv and os.path.exists(cache_file):
         os.remove(cache_file)
         print("🔄 [MANUAL REFRESH] '--refresh' flag detected: Cleared raw_odds_cache.json")
@@ -1684,7 +1686,7 @@ def build_sports_briefings():
             away_rk_str, _ = get_league_badge_and_val(away_team, league, global_stats, fmt=badge_format, style="")
             home_rk_str, _ = get_league_badge_and_val(home_team, league, global_stats, fmt=badge_format, style="")
             
-            import re
+
             def format_card_ranks(raw_team, analytics_badge):
                 match = re.match(r'^\((\d+)\)\s*(.*)', raw_team)
                 if match:
