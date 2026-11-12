@@ -618,7 +618,7 @@ def filter_college_games(odds_games, league, global_stats=None):
                         full_name = f"{loc} {mascot}".strip().lower()
                         top_25_teams[full_name] = current_rank
                         
-                        # --- FIX: Store a "St" and "St." variation so the Odds API matches it ---
+                        # Store a "St" and "St." variation so the Odds API matches it
                         if "state" in full_name:
                             top_25_teams[full_name.replace("state", "st")] = current_rank
                             top_25_teams[full_name.replace("state", "st.")] = current_rank
@@ -645,6 +645,30 @@ def filter_college_games(odds_games, league, global_stats=None):
             "butler", "uconn", "connecticut", "creighton", "depaul", "georgetown", "marquette", "providence", "st. john's", "seton hall", "villanova", "xavier"
         })
 
+    modifiers = [
+        "eastern", "western", "central", "northern", "southern", "gulf", "middle", 
+        "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", 
+        "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas",
+        "corpus christi", "little rock", "monroe", "lafayette", "arlington", "san antonio", "el paso"
+    ]
+
+    def is_clean_school_match(base_school, full_team_str):
+        """Checks if base_school is inside full_team_str without any unshared regional modifiers."""
+        # Standardize 'st' / 'st.' to 'state' so "Michigan St" matches "michigan state"
+        b_clean = re.sub(r'(?<!^)\bst\.?\b', 'state', base_school.lower().strip())
+        f_clean = re.sub(r'(?<!^)\bst\.?\b', 'state', full_team_str.lower().strip())
+
+        if not re.search(rf'(?<!\w){re.escape(b_clean)}(?!\w)', f_clean):
+            return False
+
+        for mod in modifiers:
+            mod_clean = re.sub(r'(?<!^)\bst\.?\b', 'state', mod)
+            in_full = bool(re.search(rf'(?<!\w){re.escape(mod_clean)}(?!\w)', f_clean))
+            in_base = bool(re.search(rf'(?<!\w){re.escape(mod_clean)}(?!\w)', b_clean))
+            if in_full and not in_base:
+                return False
+        return True
+
     filtered_games = []
     
     for game in odds_games:
@@ -656,29 +680,12 @@ def filter_college_games(odds_games, league, global_stats=None):
 
         away_rank_str = ""
         home_rank_str = ""
-        modifiers = [
-        "eastern", "western", "central", "northern", "southern", "gulf", "middle", 
-        "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", 
-        "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas"
-        ]
         
         for t_name, t_rank in top_25_teams.items():
-            # Anti-greedy check so directional schools don't inherit base school AP ranks
-            if t_name in away and not away_rank_str:
-                is_valid = True
-                for mod in modifiers:
-                    if (f"{mod} " in away or f" {mod}" in away) and (f"{mod} " not in t_name and f" {mod}" not in t_name):
-                        is_valid = False
-                if is_valid:
-                    away_rank_str = f"({t_rank}) "
-                    
-            if t_name in home and not home_rank_str:
-                 is_valid = True
-                 for mod in modifiers:
-                    if (f"{mod} " in home or f" {mod}" in home) and (f"{mod} " not in t_name and f" {mod}" not in t_name):
-                        is_valid = False
-                 if is_valid:
-                    home_rank_str = f"({t_rank}) "
+            if not away_rank_str and is_clean_school_match(t_name, away):
+                away_rank_str = f"({t_rank}) "
+            if not home_rank_str and is_clean_school_match(t_name, home):
+                home_rank_str = f"({t_rank}) "
 
         game['away_rank'] = away_rank_str
         game['home_rank'] = home_rank_str
@@ -702,20 +709,8 @@ def filter_college_games(odds_games, league, global_stats=None):
                 continue
             
         # Rule 3: Are BOTH teams in the Power Conferences?
-        # Use Regex word boundaries so "duke" doesn't match "dukes"
-        away_is_power = any(re.search(rf'\b{re.escape(p)}\b', away) for p in power_teams)
-        home_is_power = any(re.search(rf'\b{re.escape(p)}\b', home) for p in power_teams)
-        
-        # Anti-greedy check: catch directional/regional schools sharing power names (e.g., Miami vs Miami OH)
-        directional_tags = [" st", " state", " tech", "(oh)", "ohio", "eastern", "western", "northern", "southern", "central"]
-        
-        if away_is_power:
-             if any(d in away for d in directional_tags) and not any(p in away for p in power_teams if any(d in p for d in directional_tags)):
-                 away_is_power = False
-                 
-        if home_is_power:
-             if any(d in home for d in directional_tags) and not any(p in home for p in power_teams if any(d in p for d in directional_tags)):
-                 home_is_power = False
+        away_is_power = any(is_clean_school_match(p, away) for p in power_teams)
+        home_is_power = any(is_clean_school_match(p, home) for p in power_teams)
         
         if away_is_power and home_is_power:
             filtered_games.append(game)
