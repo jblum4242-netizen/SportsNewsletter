@@ -1931,7 +1931,7 @@ def build_sports_briefings():
         boards_html += "</div>"
 
 
- # ---------------------------------------------------------
+    # ---------------------------------------------------------
     # 4. FINAL WEB DASHBOARD HTML (With Modern CSS)
     # ---------------------------------------------------------
     web_dashboard_html = f"""<!DOCTYPE html>
@@ -1939,6 +1939,16 @@ def build_sports_briefings():
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        
+        <!-- iOS Standalone Web App Tags -->
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="apple-mobile-web-app-title" content="Sports Slate">
+        
+        <!-- Retro Arcade Neon Custom iOS Home Screen Icon -->
+        <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/jblum4242-netizen/SportsNewsletter/main/assets/retro_neon_icon.png">
+        
         <title>Sports NewsLetter</title>
         <style>
             body {{
