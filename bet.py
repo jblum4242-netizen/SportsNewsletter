@@ -646,7 +646,7 @@ def filter_college_games(odds_games, league, global_stats=None):
 
         away_rank_str = ""
         home_rank_str = ""
-        modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st", "tech", "a&m", "ohio", "christian","atlantic"]
+        modifiers = ["eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st", "tech", "a&m", "ohio", "christian","atlantic", "arkansas"]
         
         for t_name, t_rank in top_25_teams.items():
             # Anti-greedy check so directional schools don't inherit base school AP ranks
@@ -1216,13 +1216,23 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
     # Regional and directional modifiers that shouldn't be ignored
     # Regional and directional modifiers that shouldn't be ignored
     modifiers = [
-        "eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", "east", "west", "pine bluff", "cal", "christian","atlantic"
+        "eastern", "western", "central", "northern", "southern", "gulf", "middle", "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", "east", "west", "pine bluff", "cal", "christian","atlantic", "arkansas"
         ]
 
     for key, metrics in league_data.items():
         k_lower = key.lower()
         match_found = False
         
+        # --- NEW: Equalize abbreviations before matching ---
+        k_lower = k_lower.replace(" st.", " state").replace(" st", " state")
+        t_lower = t_lower.replace(" st.", " state").replace(" st", " state")
+        
+        if k_lower == "unc" or k_lower == "n carolina": 
+            k_lower = "north carolina"
+        if t_lower == "unc" or t_lower == "n carolina": 
+            t_lower = "north carolina"
+        # -------------------------------------------------
+
         # 1. Exact Match or Mascot Match
         if k_lower == t_lower or (len(mascot) > 3 and k_lower == mascot):
             match_found = True
