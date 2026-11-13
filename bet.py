@@ -2186,10 +2186,11 @@ def build_sports_briefings():
                     row.style.display = (!query || text.includes(query)) ? '' : 'none';
                 }});
 
-                // 2. Filter matchup analysis cards (direct child divs with rounded borders)
+                // 2. Filter matchup analysis cards by header (teams, league, date, TV) only — ignore Last 5 tables
                 Array.from(activeTab.children).forEach(card => {{
                     if (card.classList.contains('card-container')) return; // Keep top schedule card
-                    const text = card.innerText.toLowerCase();
+                    const headerDiv = card.firstElementChild;
+                    const text = (headerDiv ? headerDiv.innerText : card.innerText).toLowerCase();
                     card.style.display = (!query || text.includes(query)) ? 'block' : 'none';
                 }});
 
