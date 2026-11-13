@@ -2167,18 +2167,27 @@ def build_sports_briefings():
             }});
         </script>
         <script>
-            // Force external links to open in the full Safari app when launched from iOS Home Screen
-            if (window.navigator.standalone === true) {{
+            // Force external links to open in the full Safari app on iOS Home Screen
+            const isIOSStandalone = (window.navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
+            if (isIOSStandalone) {{
                 function routeLinksToSafari() {{
-                    document.querySelectorAll('a[href^="https://"]').forEach(link => {{
+                    document.querySelectorAll('a[href^="http"]').forEach(link => {{
                         if (!link.href.includes('jblum4242-netizen.github.io')) {{
                             link.removeAttribute('target');
-                            link.href = link.href.replace(/^https:\/\//i, 'x-safari-https://');
+                            link.href = link.href.replace(/^http(s?):\/\//i, 'x-safari-http$1://');
                         }}
                     }});
                 }}
                 window.addEventListener('DOMContentLoaded', routeLinksToSafari);
                 routeLinksToSafari();
+
+                document.addEventListener('click', function(e) {{
+                    const link = e.target.closest('a');
+                    if (link && link.href && link.href.startsWith('http') && !link.href.includes('jblum4242-netizen.github.io')) {{
+                        e.preventDefault();
+                        window.location.href = link.href.replace(/^http(s?):\/\//i, 'x-safari-http$1://');
+                    }}
+                }});
             }}
         </script>
     </body>
