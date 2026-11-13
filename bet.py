@@ -1244,6 +1244,13 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
     elif t_lower == "ku":
         t_lower = "kansas"
 
+    # --- DIRECT EXACT / ALIAS MATCH FIRST (Catches all NCAAF_ALIASES & NBA/NCAAB) ---
+    clean_exact = re.sub(r'^\(\d+\)\s*', '', t_lower).strip()
+    if clean_exact in league_data:
+        rk = league_data[clean_exact].get("net_epa_rank") or league_data[clean_exact].get("rank")
+        if rk and str(rk) not in ["-", ""]:
+            return format_badge(rk), int(rk)
+
     for key, metrics in league_data.items():
         k_lower = key.lower().strip()
         match_found = False
@@ -2107,7 +2114,7 @@ def build_sports_briefings():
         <!-- INSTANT FILTER / SEARCH BAR -->
         <div style="display: flex; gap: 8px; margin-bottom: 16px; align-items: center;">
             <div style="position: relative; flex: 1;">
-                <input type="text" id="slate-search" oninput="filterSlate()" placeholder="🔍 Filter teams, players, or TV (e.g. Delaware, Eagles, ESPN)..." 
+                <input type="text" id="slate-search" oninput="filterSlate()" placeholder="🔍 Filter teams or TV (e.g. Eagles, ESPN)..." 
                        style="width: 100%; box-sizing: border-box; padding: 10px 36px 10px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 13px; background: #ffffff; color: #0f172a; outline: none; box-shadow: 0 1px 2px rgba(0,0,0,0.04);">
                 <button id="clear-search-btn" onclick="clearSlateSearch()" style="display: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: #e2e8f0; border: none; border-radius: 50%; width: 20px; height: 20px; font-size: 11px; font-weight: bold; color: #475569; cursor: pointer; line-height: 1;">✕</button>
             </div>
@@ -2287,8 +2294,9 @@ def build_sports_briefings():
             }});
         </script>
         <script>
-            // Force external links to open in the full Safari app on iOS Home Screen
-            const isIOSStandalone = (window.navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
+            // Force external links to open in Safari ONLY on iOS standalone Home Screen apps
+            const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            const isIOSStandalone = isIOSDevice && ((window.navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches);
             if (isIOSStandalone) {{
                 function routeLinksToSafari() {{
                     document.querySelectorAll('a[href^="http"]').forEach(link => {{

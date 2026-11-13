@@ -81,6 +81,10 @@ NCAAF_ALIASES = {
     "michigan state spartans": "michigan st",
     "florida gators": "florida",
     "new mexico state aggies": "new mexico st",
+    "kansas jayhawks": "kansas",
+    "houston cougars": "houston",
+    "texas a&m aggies": "texas a&m",
+    "north carolina tar heels": "north carolina"
 }
 
 

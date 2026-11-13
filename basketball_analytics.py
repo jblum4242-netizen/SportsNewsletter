@@ -94,7 +94,15 @@ NCAAB_ALIASES = {
     "delaware st hornets": "delaware st.",
     "grambling st tigers": "grambling st.",
     "appalachian st mountaineers": "appalachian st.",
-    "pennsylvania quakers": "penn"   
+    "florida int'l": "fiu",
+    "florida international": "fiu",
+    "siu-edwardsville": "siue",
+    "siu edwardsville": "siue",
+    "prairie view": "prairie view a&m",
+    "texas a&m-cc": "texas a&m corpus chris",
+    "texas a&m-corpus christi": "texas a&m corpus chris",    
+    "pennsylvania quakers": "penn"
+
 }
 
 def _clean_team_key(name):
