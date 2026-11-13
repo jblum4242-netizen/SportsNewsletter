@@ -649,7 +649,8 @@ def filter_college_games(odds_games, league, global_stats=None):
         "eastern", "western", "central", "northern", "southern", "gulf", "middle", 
         "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", 
         "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas",
-        "corpus christi", "little rock", "monroe", "lafayette", "arlington", "san antonio", "el paso"
+        "corpus christi", "little rock", "monroe", "lafayette", "arlington", "san antonio", "el paso",
+        "int'l", "intl", "international"
     ]
 
     def is_clean_school_match(base_school, full_team_str):
@@ -1195,6 +1196,16 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
         badge_text = fmt.format(rk=rk)
         return f"<span style='{style}'>{badge_text}</span>" if style else badge_text
 
+    # --- NBA & NCAAB: Use basketball_analytics bulletproof alias/hyphen lookup ---
+    if lg.upper() in ["NBA", "NCAAB"]:
+        clean_t = re.sub(r'^\(\d+\)\s*', '', team_str.strip())
+        stats_obj = basketball_analytics._lookup_team_stats(clean_t, lg.upper(), league_data)
+        if stats_obj:
+            rk = stats_obj.get("rank") or stats_obj.get("net_epa_rank")
+            if rk and str(rk) not in ["-", ""]:
+                return format_badge(rk), int(rk)
+        return "", 999
+
     # --- EPL MATCHING ---
     if lg.upper() == "EPL":
         if t_lower in league_data:
@@ -1220,7 +1231,8 @@ def get_league_badge_and_val(team_str, lg, global_stats, fmt="(#{rk}) ", style="
     modifiers = [
         "eastern", "western", "central", "northern", "southern", "gulf", "middle", 
         "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", 
-        "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas"
+        "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas",
+        "int'l", "intl", "international"
     ]
 
     # --- 1. CLEAN THE ODDS API NAME EXACTLY ONCE ---
@@ -2087,6 +2099,20 @@ def build_sports_briefings():
             {dynamic_nav_buttons}
             <button class="tab-btn" id="btn-dynasty" onclick="switchTab('dynasty')" style="display: none;">🏈 Dynasty Roster</button>
         </div>
+        <!-- PULL-TO-REFRESH INDICATOR -->
+        <div id="ptr-indicator" style="display: none; text-align: center; padding: 8px; font-size: 12px; font-weight: 700; color: #2563eb; background: #eff6ff; border-radius: 8px; margin-bottom: 12px;">
+            🔄 Pull down to refresh...
+        </div>
+
+        <!-- INSTANT FILTER / SEARCH BAR -->
+        <div style="display: flex; gap: 8px; margin-bottom: 16px; align-items: center;">
+            <div style="position: relative; flex: 1;">
+                <input type="text" id="slate-search" oninput="filterSlate()" placeholder="🔍 Filter teams, players, or TV (e.g. Delaware, Eagles, ESPN)..." 
+                       style="width: 100%; box-sizing: border-box; padding: 10px 36px 10px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 13px; background: #ffffff; color: #0f172a; outline: none; box-shadow: 0 1px 2px rgba(0,0,0,0.04);">
+                <button id="clear-search-btn" onclick="clearSlateSearch()" style="display: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: #e2e8f0; border: none; border-radius: 50%; width: 20px; height: 20px; font-size: 11px; font-weight: bold; color: #475569; cursor: pointer; line-height: 1;">✕</button>
+            </div>
+            <button onclick="forceRefreshApp()" title="Refresh Data" style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 700; color: #475569; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.04);">🔄</button>
+        </div>
         
         <!-- TAB 1: TODAY'S GAMES ONLY -->
         <div id="tab-today" class="tab-content">
@@ -2135,6 +2161,100 @@ def build_sports_briefings():
                 window.location.hash = tabName;
             }}
 
+            // --- LIVE SEARCH / FILTER ---
+            function filterSlate() {{
+                const input = document.getElementById('slate-search');
+                const clearBtn = document.getElementById('clear-search-btn');
+                const query = input.value.toLowerCase().trim();
+                clearBtn.style.display = query ? 'block' : 'none';
+
+                // Find whichever tab is currently visible
+                const activeTab = Array.from(document.querySelectorAll('.tab-content')).find(el => el.style.display === 'block');
+                if (!activeTab) return;
+
+                // 1. Filter schedule table rows (keep date headers visible if they have matching games)
+                activeTab.querySelectorAll('.card-container table tr').forEach(row => {{
+                    if (row.querySelector('td[colspan]')) return; // Skip date header rows
+                    const text = row.innerText.toLowerCase();
+                    row.style.display = (!query || text.includes(query)) ? '' : 'none';
+                }});
+
+                // 2. Filter matchup analysis cards (direct child divs with rounded borders)
+                Array.from(activeTab.children).forEach(card => {{
+                    if (card.classList.contains('card-container')) return; // Keep top schedule card
+                    const text = card.innerText.toLowerCase();
+                    card.style.display = (!query || text.includes(query)) ? 'block' : 'none';
+                }});
+
+                // 3. Filter My Team News sections if on the News tab
+                if (activeTab.id === 'tab-news') {{
+                    activeTab.querySelectorAll('h4').forEach(h4 => {{
+                        const ul = h4.nextElementSibling;
+                        const moreLink = ul ? ul.nextElementSibling : null;
+                        const match = !query || h4.innerText.toLowerCase().includes(query) || (ul && ul.innerText.toLowerCase().includes(query));
+                        h4.style.display = match ? '' : 'none';
+                        if (ul) ul.style.display = match ? '' : 'none';
+                        if (moreLink) moreLink.style.display = match ? '' : 'none';
+                    }});
+                }}
+            }}
+
+            function clearSlateSearch() {{
+                const input = document.getElementById('slate-search');
+                input.value = '';
+                filterSlate();
+                input.focus();
+            }}
+
+            // --- CACHE-BUSTING REFRESH ---
+            function forceRefreshApp() {{
+                const ptr = document.getElementById('ptr-indicator');
+                if (ptr) {{
+                    ptr.style.display = 'block';
+                    ptr.innerText = '⏳ Fetching latest slate...';
+                }}
+                const url = new URL(window.location.href);
+                url.searchParams.set('t', Date.now());
+                window.location.replace(url.toString());
+            }}
+
+            // --- iOS STANDALONE PULL-TO-REFRESH ---
+            let ptrStartY = 0;
+            let ptrTriggered = false;
+            window.addEventListener('touchstart', (e) => {{
+                if (window.scrollY <= 0) {{
+                    ptrStartY = e.touches[0].clientY;
+                    ptrTriggered = false;
+                }}
+            }}, {{ passive: true }});
+
+            window.addEventListener('touchmove', (e) => {{
+                if (ptrStartY > 0 && window.scrollY <= 0) {{
+                    const pullDist = e.touches[0].clientY - ptrStartY;
+                    const ptr = document.getElementById('ptr-indicator');
+                    if (pullDist > 35 && ptr) {{
+                        ptr.style.display = 'block';
+                        if (pullDist > 85) {{
+                            ptr.innerText = '🚀 Release to refresh slate!';
+                            ptrTriggered = true;
+                        }} else {{
+                            ptr.innerText = '⬇️ Pull down to refresh...';
+                            ptrTriggered = false;
+                        }}
+                    }}
+                }}
+            }}, {{ passive: true }});
+
+            window.addEventListener('touchend', () => {{
+                const ptr = document.getElementById('ptr-indicator');
+                if (ptrTriggered) {{
+                    forceRefreshApp();
+                }} else if (ptr) {{
+                    ptr.style.display = 'none';
+                }}
+                ptrStartY = 0;
+            }});
+
             // --- NHL TOOLTIP HANDLERS ---
             function toggleTooltip(el, e) {{
                 if (e.target.classList.contains('tooltip-close')) return;
@@ -2174,7 +2294,7 @@ def build_sports_briefings():
                     document.querySelectorAll('a[href^="http"]').forEach(link => {{
                         if (!link.href.includes('jblum4242-netizen.github.io')) {{
                             link.removeAttribute('target');
-                            link.href = link.href.replace(/^http(s?):\/\//i, 'x-safari-http$1://');
+                            link.href = link.href.replace(/^http(s?):\\/\\//i, 'x-safari-http$1://');
                         }}
                     }});
                 }}
@@ -2185,7 +2305,7 @@ def build_sports_briefings():
                     const link = e.target.closest('a');
                     if (link && link.href && link.href.startsWith('http') && !link.href.includes('jblum4242-netizen.github.io')) {{
                         e.preventDefault();
-                        window.location.href = link.href.replace(/^http(s?):\/\//i, 'x-safari-http$1://');
+                        window.location.href = link.href.replace(/^http(s?):\\/\\//i, 'x-safari-http$1://');
                     }}
                 }});
             }}
