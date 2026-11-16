@@ -629,6 +629,16 @@ def filter_college_games(odds_games, league, global_stats=None):
             
     return filtered_games
 
+_LAST5_CACHE_FILE = r"C:\Users\jblum\Python\SportsNewsletter\last5_cache.json"
+_LAST5_CACHE = {}
+if os.path.exists(_LAST5_CACHE_FILE):
+    try:
+        with open(_LAST5_CACHE_FILE, "r", encoding="utf-8") as _f:
+            _LAST5_CACHE = json.load(_f)
+    except Exception:
+        _LAST5_CACHE = {}
+
+
 def fetch_last_5_games(team_name, league):
     league_str = league.lower()
     if league_str in ["nba", "ncaab"]:
@@ -641,6 +651,13 @@ def fetch_last_5_games(team_name, league):
         sport = "baseball"
         
     team_slug = build_covers_slug(team_name)
+    today_key = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    cache_key = f"{today_key}:{league_str}:{team_slug}"
+
+    # Return cached Last 5 logs for today unless --full is explicitly passed
+    if "--full" not in sys.argv and cache_key in _LAST5_CACHE:
+        return _LAST5_CACHE[cache_key]
+
     url = f"https://www.covers.com/sport/{sport}/{league_str}/teams/main/{team_slug}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     last_5 = []
@@ -705,8 +722,19 @@ def fetch_last_5_games(team_name, league):
                             break
     except Exception as e:
         print(f"Last 5 Games Scraping Error for {team_name}: {e}")
+
+    # Cache non-empty results for the rest of the day (prune old dates)
+    if last_5:
+        _LAST5_CACHE[cache_key] = last_5
+        try:
+            pruned = {k: v for k, v in _LAST5_CACHE.items() if k.startswith(today_key)}
+            with open(_LAST5_CACHE_FILE, "w", encoding="utf-8") as _f:
+                json.dump(pruned, _f)
+        except Exception:
+            pass
         
     return last_5
+
 
 def build_last_5_html(team_name, last_5_data):
     if not last_5_data: return f"<div style='margin-bottom: 8px;'><span style='color: #a0aec0; font-size: 11px;'>No recent data available for {team_name}.</span></div>"
