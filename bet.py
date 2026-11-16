@@ -1308,12 +1308,19 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
 
             except Exception as e:
                 print(f"⚠️ Error formatting {league_key} ranks in schedule: {e}")
+    
+        # Append home spread badge (e.g., "-4.5" or "+3.5") if available
+        raw_spread = str(g.get('home_spread', '-')).strip()
+        spread_badge = ""
+        if raw_spread and raw_spread not in ["-", "None", ""]:
+            disp_spread = "PK" if raw_spread in ["0", "0.0", "+0", "+0.0", "-0.0"] else raw_spread
+            spread_badge = f" <span style='color: #0f172a; background-color: #e2e8f0; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 800; margin-left: 4px;'>{disp_spread}</span>"
 
         # Live score handling
         if g['real_status'] in ['completed', 'in_progress'] and g['live_feed']:
             matchup_display = f"<span style='color: #dc2626; font-weight: bold;'>{g['live_feed']}</span>"
         else:
-            matchup_display = f"{matchup_text}{tv_station}"
+            matchup_display = f"{matchup_text}{spread_badge}{tv_station}"
             
         league_badge = f"<td style='padding: 8px 10px; color: #2563eb; font-weight: 700; width: 12%;'>[{g['league']}]</td>" if show_league_badge else ""
         
@@ -1630,7 +1637,8 @@ def build_sports_briefings():
                 "game_datetime": game.get('game_datetime', now_eastern),
                 "date_header_str": date_str,
                 "real_status": real_status,
-                "live_feed": live_feed
+                "live_feed": live_feed,
+                "home_spread": game.get('home_spread', '-')
             })
 
     # Filter Today's Games (Excluding NHL to reduce noise)
@@ -2365,7 +2373,10 @@ if __name__ == '__main__':
     # 3. Generate the Dynasty Roster (fantasy.html)
     t_fan = log_step("START: Generating Dynasty Roster (fantasy_news.py)...")
     try:
-        subprocess.run(["python", r"C:\Users\jblum\Python\SportsNewsletter\fantasy_news.py"], check=True)
+        subprocess.run(
+            ["python", r"C:\Users\jblum\Python\SportsNewsletter\fantasy_news.py", *sys.argv[1:]],
+            check=True
+        )
     except Exception as e:
         print(f"⚠️ Could not generate fantasy.html: {e}")
     log_step("DONE: Dynasty Roster (fantasy_news.py)", t_fan)

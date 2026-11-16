@@ -3,6 +3,7 @@ import json
 import os
 import time
 import datetime
+import sys
 import urllib.parse
 import xml.etree.ElementTree as ET
 from googlenewsdecoder import gnewsdecoder
@@ -437,9 +438,21 @@ def send_fantasy_email(username):
 # This block ONLY runs if you execute this specific file directly.
 # It will be ignored if you import this file into bet.py later!
 if __name__ == '__main__':
-    username = "GreatBlumbino"  # Replace with your actual Sleeper username
-    
+    fantasy_html_path = r"C:\Users\jblum\Python\SportsNewsletter\fantasy.html"
+    today_et = datetime.datetime.now(ZoneInfo("America/New_York")).date()
+
+    already_updated_today = False
+    if os.path.exists(fantasy_html_path):
+        file_date = datetime.datetime.fromtimestamp(
+            os.path.getmtime(fantasy_html_path), tz=ZoneInfo("America/New_York")
+        ).date()
+        already_updated_today = (file_date == today_et)
+
+    # Skip if fantasy.html was already generated today AND --refresh was NOT passed
+    if already_updated_today and "--refresh" not in sys.argv:
+        print(f"📦 [CACHE] fantasy.html is already up-to-date for {today_et} (pass --refresh to force update).")
+        sys.exit(0)
+
+    username = "GreatBlumbino"
     print("🚀 Booting up Fantasy News Submodule...\n")
-    
-    # Send the fantasy news email directly!
     send_fantasy_email(username)
