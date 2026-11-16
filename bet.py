@@ -86,18 +86,6 @@ ESPN_SPORT_MAP = {
 }
 
 
-# Master List of Power Conference Schools
-POWER_CONFERENCE_SCHOOLS = [
-    "Alabama", "Arkansas", "Auburn", "Florida", "Georgia", "Kentucky", "LSU", "Ole Miss", "Mississippi State", "Missouri", "Oklahoma", "South Carolina", "Tennessee", "Texas", "Texas A&M", "Vanderbilt",
-    "Illinois", "Indiana", "Iowa", "Maryland", "Michigan", "Michigan State", "Minnesota", "Nebraska", "Northwestern", "Ohio State", "Oregon", "Penn State", "Purdue", "Rutgers", "UCLA", "USC", "Washington", "Wisconsin",
-    "Boston College", "California", "Clemson", "Duke", "Florida State", "Georgia Tech", "Louisville", "Miami", "North Carolina", "NC State", "Pittsburgh", "SMU", "Stanford", "Syracuse", "Virginia", "Virginia Tech", "Wake Forest",
-    "Arizona", "Arizona State", "Baylor", "BYU", "Cincinnati", "Colorado", "Houston", "Iowa State", "Kansas", "Kansas State", "Oklahoma State", "TCU", "Texas Tech", "UCF", "Utah", "West Virginia"
-]
-
-BIG_EAST_HOOPS = [
-    "Butler", "UConn", "Connecticut", "Creighton", "DePaul", "Georgetown", "Marquette", "Providence", "St. John's", "Seton Hall", "Villanova", "Xavier"
-]
-
 SYSTEM_LOGS = []
 
 def fetch_live_odds_clean(sport_key):
@@ -321,6 +309,35 @@ def fetch_covers_consensus(league):
         
     return consensus_list
 
+def build_covers_slug(team_name):
+    """Deterministically converts Odds API team names into Covers.com URL slugs."""
+    # 1. Strip any leading ranking badges e.g. "(12) " or "[AP 5] "
+    clean_name = re.sub(r'^(\[.*?\]|\(\d+\))\s*', '', team_name.strip())
+    normalized = unicodedata.normalize('NFKD', clean_name).encode('ASCII', 'ignore').decode('utf-8')
+    s = normalized.lower().strip()
+
+    # 2. Expand directional prefixes (e.g., "SE Louisiana" -> "Southeastern Louisiana")
+    prefix_map = {
+        r"^se\b": "southeastern",
+        r"^sw\b": "southwestern",
+        r"^ne\b": "northeastern",
+        r"^nw\b": "northwestern",
+    }
+    for pattern, replacement in prefix_map.items():
+        s = re.sub(pattern, replacement, s)
+
+    # 3. Expand "st" / "st." to "state" (except when at the very start like "St. John's")
+    s = re.sub(r'(?<!^)\bst\.?\b', 'state', s)
+
+    # 4. Handle official nickname rebrands where Odds API lags behind Covers
+    s = re.sub(r"^long beach state 49ers$", "long beach state beach", s)
+
+    # 5. Replace '&' with '-', strip remaining punctuation, and hyphenate
+    s = s.replace("&", "-")
+    s = re.sub(r"['\.()]", "", s)
+    return re.sub(r"[\s\-]+", "-", s).strip("-")
+
+
 def fetch_covers_injuries(team_name, league):
     league_upper = league.upper()
     
@@ -339,22 +356,7 @@ def fetch_covers_injuries(team_name, league):
     else:
         return []
 
-    # --- Clean team_name into a valid Covers URL slug ---
-    clean_name = team_name.lower().strip()
-    
-    # 1. Strip any leading ranking badges if present, e.g. "(12) " or "[AP 5] "
-    clean_name = re.sub(r'^(\[.*?\]|\(\d+\))\s*', '', clean_name)
-    
-    # 2. Expand "st" / "st." to "state" (except when at the very start like "St. John's")
-    clean_name = re.sub(r'(?<!^)\bst\.?\b', 'state', clean_name)
-    
-    # 3. Replace '&' with '-' so "Texas A&M" becomes "texas-a-m" instead of "texas-am"
-    clean_name = clean_name.replace("&", "-")
-    
-    # 4. Remove remaining punctuation (periods, apostrophes, parentheses) and hyphenate
-    clean_name = re.sub(r"['\.()]", "", clean_name)
-    slug = re.sub(r"[\s\-]+", "-", clean_name).strip("-")
-    
+    slug = build_covers_slug(team_name)
     url = f"https://www.covers.com/sport/{sport}/{lg}/teams/main/{slug}/injuries"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
     injuries = []
@@ -470,129 +472,6 @@ def fetch_tv_networks(league):
                 except: continue 
     except Exception as e: print(f"ESPN TV API Error: {e}")
     return tv_map
-
-def fetch_mlb_pitcher_data():
-    today_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today_date}&hydrate=probablePitcher"
-    payload = {
-        "string": "TBD vs TBD", "away_pitcher_id": None, "away_pitcher_name": None,
-        "home_pitcher_id": None, "home_pitcher_name": None, "away_team_name": None, "home_team_name": None
-    }
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            dates = res.json().get("dates", [])
-            if not dates: return payload
-            for game in dates[0].get("games", []):
-                teams = game.get("teams", {})
-                away = teams.get("away", {})
-                home = teams.get("home", {})
-                away_name = away.get("team", {}).get("name", "")
-                home_name = home.get("team", {}).get("name", "")
-                if "Phillies" in away_name or "Phillies" in home_name:
-                    away_p = away.get("probablePitcher", {})
-                    home_p = home.get("probablePitcher", {})
-                    payload["string"] = f"{away_p.get('fullName', 'TBD')} vs {home_p.get('fullName', 'TBD')}"
-                    payload["away_pitcher_id"] = away_p.get("id")
-                    payload["away_pitcher_name"] = away_p.get("fullName")
-                    payload["home_pitcher_id"] = home_p.get("id")
-                    payload["home_pitcher_name"] = home_p.get("fullName")
-                    payload["away_team_name"] = away_name
-                    payload["home_team_name"] = home_name
-                    return payload
-    except Exception as e: print(f"MLB API Error: {e}")
-    return payload
-
-def build_pitcher_logs_html(pitcher_id, pitcher_name, opponent_name):
-    if not pitcher_id: return ""
-    current_year = datetime.datetime.now().year
-    url = f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}/stats?stats=gameLog&group=pitching&season={current_year}"
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            stats = res.json().get("stats", [])
-            if not stats: return ""
-            splits = stats[0].get("splits", [])
-            if not splits: return ""
-            splits.reverse() 
-            last_5 = splits[:5]
-            last_vs_opp = next((s for s in splits if opponent_name in s.get("opponent", {}).get("name", "")), None)
-            
-            log_html = f"<div style='margin-top: 15px; font-size: 13px;'><b style='color:#e53e3e;'>⚾ {pitcher_name}</b> - Last 5 Starts:</div>"
-            log_html += "<table style='width: 100%; font-size: 11px; border-collapse: collapse; text-align: center; margin-top: 5px; margin-bottom: 10px;'>"
-            log_html += "<tr style='background-color: #edf2f7; font-weight: bold;'><td>Date</td><td>Opp</td><td>IP</td><td>H</td><td>ER</td><td>SO</td><td>BB</td></tr>"
-            
-            def format_row(s):
-                date = s.get("date", "")[5:]
-                opp = s.get("opponent", {}).get("name", "").split()[-1]
-                is_home = s.get("isHome", False)
-                opp_display = f"vs {opp}" if is_home else f"@ {opp}"
-                st = s.get("stat", {})
-                ip = st.get("inningsPitched", "0.0")
-                h = st.get("hits", 0)
-                er = st.get("earnedRuns", 0)
-                so = st.get("strikeOuts", 0)
-                bb = st.get("baseOnBalls", 0)
-                return f"<tr style='border-bottom: 1px solid #e2e8f0;'><td style='padding: 6px;'>{date}</td><td>{opp_display}</td><td>{ip}</td><td>{h}</td><td>{er}</td><td>{so}</td><td>{bb}</td></tr>"
-
-            for s in last_5: log_html += format_row(s)
-            log_html += "</table>"
-            if last_vs_opp:
-                opp_short = opponent_name.split()[-1]
-                log_html += f"<div style='font-size: 12px;'><b style='color:#e53e3e;'>Last vs {opp_short}:</b></div>"
-                log_html += "<table style='width: 100%; font-size: 11px; border-collapse: collapse; text-align: center; margin-top: 5px; margin-bottom: 10px;'>"
-                log_html += "<tr style='background-color: #edf2f7; font-weight: bold;'><td>Date</td><td>Opp</td><td>IP</td><td>H</td><td>ER</td><td>SO</td><td>BB</td></tr>"
-                log_html += format_row(last_vs_opp)
-                log_html += "</table>"
-            return log_html
-    except Exception as e: print(f"Error fetching logs: {e}")
-    return ""
-
-def fetch_phillies_7_day_schedule():
-    """Bypasses the Odds API to pull a full 7-day Phillies schedule directly from MLB."""
-    eastern_tz = ZoneInfo("America/New_York")
-    now_eastern = datetime.datetime.now(eastern_tz)
-    today_str = now_eastern.strftime("%Y-%m-%d")
-    next_week_str = (now_eastern + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
-    
-    # 143 is the official MLB team ID for the Philadelphia Phillies
-    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=143&startDate={today_str}&endDate={next_week_str}&hydrate=broadcasts"
-    
-    schedule_list = []
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            dates = res.json().get("dates", [])
-            for d in dates:
-                for game in d.get("games", []):
-                    game_time_raw = game.get("gameDate")
-                    utc_dt = datetime.datetime.fromisoformat(game_time_raw.replace("Z", "+00:00"))
-                    local_dt = utc_dt.astimezone(eastern_tz)
-                    
-                    away = game.get("teams", {}).get("away", {}).get("team", {}).get("name", "Unknown")
-                    home = game.get("teams", {}).get("home", {}).get("team", {}).get("name", "Unknown")
-                    
-                    # Extract TV Network if available
-                    network = ""
-                    broadcasts = game.get("broadcasts", [])
-                    tv_list = [b.get("name") for b in broadcasts if b.get("isNational") or "NBC Sports" in b.get("name", "")]
-                    if tv_list:
-                        network = tv_list[0]
-                    
-                    schedule_list.append({
-                        "league": "MLB",
-                        "matchup": f"{away} vs. {home}",
-                        "time": local_dt.strftime("%I:%M %p ET"),
-                        "network": network,
-                        "game_datetime": local_dt,
-                        "date_header_str": local_dt.strftime("%A, %b %d"),
-                        "real_status": "upcoming",
-                        "live_feed": None
-                    })
-    except Exception as e:
-        print(f"Phillies Schedule Error: {e}")
-        
-    return schedule_list
 
 def filter_college_games(odds_games, league, global_stats=None):
     """Filters NCAAF and NCAAB games to Top 25 teams, Power Conference Head-to-Heads, and Delaware."""
@@ -719,10 +598,6 @@ def filter_college_games(odds_games, league, global_stats=None):
     return filtered_games
 
 def fetch_last_5_games(team_name, league):
-
-    # Strip leading spaces and chop off any ranking prefix like "(5) "
-    clean_team_name = re.sub(r'^\(\d+\)\s*', '', team_name.strip())
-
     league_str = league.lower()
     if league_str in ["nba", "ncaab"]:
         sport = "basketball"
@@ -733,12 +608,7 @@ def fetch_last_5_games(team_name, league):
     else:
         sport = "baseball"
         
-    normalized_name = unicodedata.normalize('NFKD', clean_team_name).encode('ASCII', 'ignore').decode('utf-8')
-    clean_slug_name = re.sub(r'(?<!^)\bst\.?\b', 'state', normalized_name.lower().strip())
-    clean_slug_name = clean_slug_name.replace("&", "-")
-    clean_slug_name = re.sub(r"['\.()]", "", clean_slug_name)
-    team_slug = re.sub(r"[\s\-]+", "-", clean_slug_name).strip("-")
-    
+    team_slug = build_covers_slug(team_name)
     url = f"https://www.covers.com/sport/{sport}/{league_str}/teams/main/{team_slug}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     last_5 = []
@@ -930,10 +800,6 @@ def build_injury_table_html(team_name, injury_data):
     html += "</table></div>"
     return html
 
-def is_subsequence(abbrev, full_string):
-    it = iter(full_string.lower())
-    return all(c in it for c in abbrev.lower())
-
 def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, global_stats=None):
     parsed_games = []
     if not games or not isinstance(games, list): 
@@ -986,7 +852,6 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
         is_phillies_game = any("Philli" in t for t in [home_team, away_team])
         
         pitcher_string = "TBD vs TBD"
-        pitcher_logs_html = ""
         
         commence_time_raw = game.get("commence_time")
         formatted_date = datetime.date.today().strftime("%A, %b %d")
@@ -1337,7 +1202,6 @@ def render_calendar_table(games_list, show_league_badge=True, global_stats=None)
         if any(squad in matchup_text.lower() for squad in my_squads):
             is_my_team = True
             
-        league_key = g['league'].upper()
         league_key = g['league'].upper()
 
         # --- RANK INJECTION & MARQUEE CHECK ---

@@ -42,7 +42,12 @@ NCAAB_ALIASES = {
     "ohio state": "ohio st.", "ohio state buckeyes": "ohio st.",
     "michigan state": "michigan st.", "michigan state spartans": "michigan st.",
     "iowa state": "iowa st.", "iowa state cyclones": "iowa st.",
-    "kansas state": "kansas st.", "oklahoma state": "oklahoma st.",
+    "kansas state": "kansas st.",
+    "kansas st": "kansas state",
+    "kansas st.": "kansas state",
+    "kansas st wildcats": "kansas state",
+    "kansas state wildcats": "kansas state",
+    "oklahoma state": "oklahoma st.",
     "mississippi state": "mississippi st.",
     "florida state": "florida st.", "florida state seminoles": "florida st.", "florida st seminoles": "florida st.",
     "arizona state": "arizona st.",
@@ -487,6 +492,9 @@ def fetch_all_basketball_stats(league):
 # ==========================================
 # 4. KENPOM SCOUTING REPORT HTML BUILDER
 # ==========================================
+# ==========================================
+# 4. KENPOM SCOUTING REPORT HTML BUILDER
+# ==========================================
 def _lookup_team_stats(team_name, league, global_stats):
     t_clean = _clean_team_key(re.sub(r"^\(\d+\)\s*", "", team_name))
     if not global_stats:
@@ -496,30 +504,42 @@ def _lookup_team_stats(team_name, league, global_stats):
         mascot = t_clean.split()[-1]
         return global_stats.get(t_clean) or global_stats.get(mascot) or {}
 
-    # NCAAB Matching (Strip mascot from Odds API name, e.g. "UCLA Bruins" -> "ucla")
-    for alias_k, torvik_v in NCAAB_ALIASES.items():
-        if t_clean.startswith(alias_k):
-            hit = global_stats.get(torvik_v.lower())
+    # Build a normalized lookup map so "Kansas St.", "Kansas St", and "Kansas State" all resolve safely
+    norm_stats = {}
+    for k, v in global_stats.items():
+        k_low = k.lower().strip()
+        k_no_dot = k_low.replace(".", "")
+        norm_stats[k_low] = v
+        norm_stats[k_no_dot] = v
+        norm_stats[re.sub(r"\bst\.?\b", "state", k_no_dot)] = v
+        norm_stats[re.sub(r"\bstate\b", "st", k_no_dot)] = v
+
+    # 1. NCAAB Alias Matching (Longest alias first so "kansas st" is checked before "kansas")
+    for alias_k, target_v in sorted(NCAAB_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
+        alias_clean = _clean_team_key(alias_k)
+        if t_clean == alias_clean or t_clean.startswith(alias_clean + " "):
+            target_low = target_v.lower().strip()
+            hit = norm_stats.get(target_low) or norm_stats.get(target_low.replace(".", ""))
             if hit:
                 return hit
 
-    # Try exact match, then prefix words without mascot
-    if t_clean in global_stats:
-        return global_stats[t_clean]
+    # 2. Try exact match
+    if t_clean in norm_stats:
+        return norm_stats[t_clean]
 
+    # 3. Prefix words without mascot (e.g. "Kansas St Wildcats" -> "kansas st")
     words = t_clean.split()
+    has_modifier = bool(re.search(r"\b(st|state|tech|a&m|international|intl)\b", t_clean))
+
     for i in range(len(words) - 1, 0, -1):
         candidate = " ".join(words[:i])
-        candidate_st = candidate.replace("state", "st.")
-        
-        # Anti-greedy safety check: Don't let a "State/St/Tech" school match a base school
-        if (" st" in t_clean or " state" in t_clean or " tech" in t_clean) and (" st" not in candidate and " state" not in candidate and " tech" not in candidate):
+
+        # Anti-greedy safety check: Don't let a "State/St/Tech/A&M" school match a base school
+        if has_modifier and not re.search(r"\b(st|state|tech|a&m|international|intl)\b", candidate):
             continue
-            
-        if candidate in global_stats:
-            return global_stats[candidate]
-        if candidate_st in global_stats:
-            return global_stats[candidate_st]
+
+        if candidate in norm_stats:
+            return norm_stats[candidate]
 
     return {}
 
