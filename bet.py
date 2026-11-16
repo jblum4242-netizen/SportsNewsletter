@@ -28,11 +28,25 @@ import hockey_analytics
 
 import basketball_analytics
 
+_SCRIPT_START = time.time()
+
 # --- PERSONAL DATA CREDENTIALS ---
 SENDER_EMAIL = "jblum4242@gmail.com"
 SENDER_PASSWORD = "lzygskznkqcejpva"
 
 ODDS_API_KEY = "c309fe5bbfddf608017dafd09997ee95"
+
+_SCRIPT_START = time.time()
+
+def log_step(label, step_start=None):
+    now_str = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M:%S %p")
+    if step_start is not None:
+        print(f"⏱️ [{now_str}] {label} ({time.time() - step_start:.1f}s | Total: {time.time() - _SCRIPT_START:.1f}s)")
+    else:
+        print(f"▶️ [{now_str}] {label}")
+    return time.time()
+
+
 
 def get_active_leagues():
     """Dynamically returns leagues that are currently in season based on the current date."""
@@ -206,7 +220,23 @@ def get_direct_article_url(google_url):
         
     return google_url
 
+_NEWS_CACHE_FILE = r"C:\Users\jblum\Python\SportsNewsletter\news_cache.json"
+_NEWS_CACHE = {}
+if os.path.exists(_NEWS_CACHE_FILE):
+    try:
+        with open(_NEWS_CACHE_FILE, "r", encoding="utf-8") as _f:
+            _NEWS_CACHE = json.load(_f)
+    except Exception:
+        _NEWS_CACHE = {}
+
 def fetch_game_previews(away_team, home_team, max_articles=3):
+    today_key = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    cache_key = f"{today_key}:{away_team} vs {home_team}"
+
+    # Return cached decoded links unless --news is explicitly passed
+    if "--news" not in sys.argv and cache_key in _NEWS_CACHE:
+        return _NEWS_CACHE[cache_key]
+
     encoded_query = urllib.parse.quote(f"{away_team} {home_team} game preview")
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -220,22 +250,26 @@ def fetch_game_previews(away_team, home_team, max_articles=3):
             for item in root.findall('./channel/item'):
                 title = item.find('title').text
                 title_lower = title.lower()
-                
                 if any(bad in title_lower for bad in clickbait_phrases):
                     continue
-                    
                 if " - " in title:
                     title = " - ".join(title.split(" - ")[:-1])
-                    
                 raw_link = item.find('link').text
                 direct_link = get_direct_article_url(raw_link)
-                
                 articles.append({'title': title, 'link': direct_link})
-                
                 if len(articles) == max_articles:
                     break
     except Exception as e:
         print(f"Google News Fetch Error: {e}")
+
+    # Prune old dates and save to disk
+    _NEWS_CACHE[cache_key] = articles
+    try:
+        pruned = {k: v for k, v in _NEWS_CACHE.items() if k.startswith(today_key)}
+        with open(_NEWS_CACHE_FILE, "w", encoding="utf-8") as _f:
+            json.dump(pruned, _f)
+    except Exception:
+        pass
         
     return articles
 
@@ -1378,22 +1412,34 @@ def fetch_ats_records(league):
 # MASTER DYNAMIC BUILDER (Returns Web HTML and Email HTML)
 # ---------------------------------------------------------
 def build_sports_briefings():
+    t = log_step("START: Fetching NFL & NCAAF advanced metrics...")
     print("🏈 Fetching NFL & NCAAF advanced metrics...")
     football_stats = {
         "NFL": football_news.fetch_all_league_stats("NFL"),
         "NCAAF": football_news.fetch_all_league_stats("NCAAF")
     }
+    log_step("DONE: NFL & NCAAF metrics", t)
+
+    t = log_step("START: Fetching NHL metrics...")
 
     nhl_official = hockey_analytics.fetch_official_nhl_stats() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
     nhl_advanced = hockey_analytics.fetch_moneypuck_stats() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
 
     # --- NEW: Fetch NHL Power Rankings & EPL xPTS ---
     nhl_power_ranks = hockey_analytics.fetch_nhl_power_rankings() if "NHL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
+    log_step("DONE: NHL metrics", t)
+
+    t = log_step("START: Fetching EPL metrics...")
+
     epl_xpts_ranks = fetch_epl_xpts_rankings() if "EPL" in [k.upper() for k in LEAGUE_MAPPING.keys()] else {}
 
+    log_step("DONE: EPL metrics", t)
+
+    t = log_step("START: Fetching NBA & NCAAB KenPom metrics...")
     print("🏀 Fetching NBA & NCAAB KenPom-style metrics...")
     nba_stats = basketball_analytics.fetch_all_basketball_stats("NBA")
     ncaab_stats = basketball_analytics.fetch_all_basketball_stats("NCAAB")
+    log_step("DONE: NBA & NCAAB metrics", t)
 
         # Unified stats dictionary accessible across all schedule renderers
     global_stats = {
@@ -1440,6 +1486,7 @@ def build_sports_briefings():
             print(f"Cache Read Error: {e}")
     
     for league, api_key in LEAGUE_MAPPING.items():
+        t_lg = log_step(f"START {league}: Odds, Covers Injuries & Game News...")
         if cache_is_fresh and league in cached_raw_odds:
             raw_odds = cached_raw_odds[league]
             print(f"📦 [CACHE] Using cached odds for {league}.")
@@ -1485,6 +1532,7 @@ def build_sports_briefings():
             final_display_list = final_display_list[:5]
             
         league_slates[league] = final_display_list
+        log_step(f"DONE {league} ({len(final_display_list)} games)", t_lg)
 
     try:
         with open(cache_file, 'w') as f:
@@ -1502,7 +1550,7 @@ def build_sports_briefings():
         "Delaware Blue Hens": 'Delaware Blue Hens Football News',
    "Philadelphia 76ers": 'Philadelphia 76ers News'
     }
-    
+    t_news = log_step("START: Fetching Favorite Teams News...")
     news_card_content = ""
     for team_name, search_query in FAVORITE_TEAMS.items():
         articles = fetch_team_news(search_query) 
@@ -1520,10 +1568,13 @@ def build_sports_briefings():
             news_card_content += f"<div style='color: #94a3b8; font-size: 12px; padding-left: 5px; font-style: italic;'>No relevant new articles found from the last 72 hours.</div>"
         news_card_content += f"<div style='margin-top: 4px; margin-bottom: 10px; font-size: 11px; padding-left: 5px;'><a href='{google_search_url}' target='_blank' style='color: #64748b;'>↳ Search all news</a></div>"
 
+    log_step("DONE: Fetching Favorite Teams News", t_news)
+
     # ---------------------------------------------------------
     # 2. COLLECT SCHEDULE DATA
     # ---------------------------------------------------------
     all_monitored_games = []
+    t_sched = log_step("START: Fetching Live ESPN Scores & Today's Schedule...")
     for league, games in league_slates.items():
         for game in games:
             away_name = game['matchup'].split(' vs. ')[0]
@@ -1550,10 +1601,12 @@ def build_sports_briefings():
     # Filter Today's Games (Excluding NHL to reduce noise)
     today_games = [g for g in all_monitored_games if g['game_datetime'].date() == today_date and g['league'].upper() != "NHL"]
     today_table_html = render_calendar_table(today_games, show_league_badge=True, global_stats=global_stats)
+    log_step("DONE: Fetching Live ESPN Scores & Today's Schedule", t_sched)
 
 # ---------------------------------------------------------
     # 3. BUILD LEAGUE TABS (Schedule + Matchup Cards)
     # ---------------------------------------------------------
+
     def render_game_block(game, league):
         block_html = (
             "<div style='background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; "
@@ -2259,6 +2312,7 @@ def send_daily_email(html_content):
         print(f"❌ Error: {e}")
 
 if __name__ == '__main__':
+    start_time = time.time()
     # 1. Generate both web and email HTML versions
     web_html, email_html = build_sports_briefings()
     
