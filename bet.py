@@ -28,8 +28,6 @@ import hockey_analytics
 
 import basketball_analytics
 
-_SCRIPT_START = time.time()
-
 # --- PERSONAL DATA CREDENTIALS ---
 SENDER_EMAIL = "jblum4242@gmail.com"
 SENDER_PASSWORD = "lzygskznkqcejpva"
@@ -843,6 +841,11 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
     now_eastern = datetime.datetime.now(eastern_tz)
     today_date = now_eastern.date()
     future_limit = now_eastern + datetime.timedelta(days=7)
+
+    t_inj_total = 0.0
+    t_news_total = 0.0
+
+    
        
     for game in games:
         home_team = game.get("home_team", "Home Team")
@@ -947,9 +950,11 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
                 away_cov = game_split.get("home_pct", "50%")
                 home_cov = game_split.get("away_pct", "50%")
                 break
-                
+
+        t0 = time.time()
         away_inj_list = fetch_covers_injuries(away_team, league)
         home_inj_list = fetch_covers_injuries(home_team, league)
+        t_inj_total += (time.time() - t0)
         away_inj_html = build_injury_table_html(away_team, away_inj_list)
         home_inj_html = build_injury_table_html(home_team, home_inj_list)
         combined_injury_html = away_inj_html + home_inj_html
@@ -1022,7 +1027,9 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
                             break
 
         # Synchronous News Fetch
+        t0 = time.time()
         articles = fetch_game_previews(away_team, home_team)
+        t_news_total += (time.time() - t0)
         query_away = away_team.replace(" ", "+")
         query_home = home_team.replace(" ", "+")
         google_search_url = f"https://www.google.com/search?q={query_away}+vs+{query_home}+news&tbm=nws"
@@ -1071,7 +1078,7 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
             "away_record": away_record,
             "home_record": home_record
         })
-        
+    print(f"   ⏱️ [{league}] Breakdown ({len(games)} raw games) -> Covers Injuries: {t_inj_total:.1f}s | Game News: {t_news_total:.1f}s")
     return sorted(parsed_games, key=lambda x: x.get('commence_time', ''))
 
         
@@ -1812,7 +1819,8 @@ def build_sports_briefings():
             f"</div>"
         )
         return block_html
-
+    
+    t_cards = log_step("START: Rendering League Tabs & Scraping Covers Last 5...")
     boards_html = ""
     dynamic_nav_buttons = ""
     
@@ -1822,6 +1830,7 @@ def build_sports_briefings():
         l_id = league.lower()
         dynamic_nav_buttons += f"<button class='tab-btn' id='btn-{l_id}' onclick=\"switchTab('{l_id}')\">🏆 {league}</button>"
         boards_html += f"<div id='tab-{l_id}' class='tab-content'>"
+
         
 # 1. League-Specific Schedule Table at Top (1-Day vs 7-Day filter)
         if league.upper() == "MLB":
@@ -1868,6 +1877,7 @@ def build_sports_briefings():
         for game in upcoming_games:
             boards_html += render_game_block(game, league)
         boards_html += "</div>"
+    log_step("DONE: Rendering League Tabs & Covers Last 5", t_cards)    
 
 
     # ---------------------------------------------------------
@@ -2312,26 +2322,34 @@ def send_daily_email(html_content):
         print(f"❌ Error: {e}")
 
 if __name__ == '__main__':
-    start_time = time.time()
+    _SCRIPT_START = time.time()
+    t_main = log_step("START: Full SportsNewsletter Pipeline")
+
     # 1. Generate both web and email HTML versions
     web_html, email_html = build_sports_briefings()
     
     # 2. Save the full app to index.html for GitHub Pages
-    print("📝 [LOCAL] Building and writing index.html...")
     file_path = r"C:\Users\jblum\Python\SportsNewsletter\index.html"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(web_html)
     print("📝 [LOCAL] Successfully updated index.html.")
     
     # 3. Generate the Dynasty Roster (fantasy.html)
-    print("🏈 [LOCAL] Generating Dynasty Roster...")
+    t_fan = log_step("START: Generating Dynasty Roster (fantasy_news.py)...")
     try:
         subprocess.run(["python", r"C:\Users\jblum\Python\SportsNewsletter\fantasy_news.py"], check=True)
     except Exception as e:
         print(f"⚠️ Could not generate fantasy.html: {e}")
+    log_step("DONE: Dynasty Roster (fantasy_news.py)", t_fan)
     
-    # 4. Automatically push the web app update to GitHub Pages (will now include fantasy.html)
+    # 4. Automatically push the web app update to GitHub Pages
+    t_git = log_step("START: Pushing to GitHub Pages...")
     push_to_github()
+    log_step("DONE: GitHub Pages Push", t_git)
     
     # 5. Dispatch the lightweight digest via email
+    t_mail = log_step("START: Sending daily email...")
     send_daily_email(email_html)
+    log_step("DONE: Daily Email Sent", t_mail)
+
+    log_step("🏁 ALL DONE: Pipeline Complete", t_main)
