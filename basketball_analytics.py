@@ -100,7 +100,9 @@ NCAAB_ALIASES = {
     "siu edwardsville": "siue",
     "prairie view": "prairie view a&m",
     "texas a&m-cc": "texas a&m corpus chris",
-    "texas a&m-corpus christi": "texas a&m corpus chris",    
+    "texas a&m-corpus christi": "texas a&m corpus chris", 
+    "se louisiana": "southeastern louisiana",
+    "se louisiana lions": "southeastern louisiana",   
     "pennsylvania quakers": "penn"
 
 }

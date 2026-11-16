@@ -713,7 +713,7 @@ def filter_college_games(odds_games, league, global_stats=None):
         away_is_power = any(is_clean_school_match(p, away) for p in power_teams)
         home_is_power = any(is_clean_school_match(p, home) for p in power_teams)
         
-        if away_is_power and home_is_power:
+        if away_is_power or home_is_power:
             filtered_games.append(game)
             
     return filtered_games
@@ -734,7 +734,10 @@ def fetch_last_5_games(team_name, league):
         sport = "baseball"
         
     normalized_name = unicodedata.normalize('NFKD', clean_team_name).encode('ASCII', 'ignore').decode('utf-8')
-    team_slug = normalized_name.lower().replace(" ", "-").replace(".", "")
+    clean_slug_name = re.sub(r'(?<!^)\bst\.?\b', 'state', normalized_name.lower().strip())
+    clean_slug_name = clean_slug_name.replace("&", "-")
+    clean_slug_name = re.sub(r"['\.()]", "", clean_slug_name)
+    team_slug = re.sub(r"[\s\-]+", "-", clean_slug_name).strip("-")
     
     url = f"https://www.covers.com/sport/{sport}/{league_str}/teams/main/{team_slug}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
