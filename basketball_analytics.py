@@ -78,6 +78,8 @@ NCAAB_ALIASES = {
     "morehead st eagles": "morehead st.",
     "mt. st. mary's mountaineers": "mount st. mary's",
     "murray st racers": "murray st.",
+    "new orleans privateers": "new orleans",
+    "lsu new orleans privateers": "new orleans",
     "nicholls st colonels": "nicholls",
     "nicholls state colonels": "nicholls",
     "nicholls st": "nicholls",
@@ -112,7 +114,18 @@ NCAAB_ALIASES = {
     "texas a&m-corpus christi": "texas a&m corpus chris", 
     "se louisiana": "southeastern louisiana",
     "se louisiana lions": "southeastern louisiana",   
-    "pennsylvania quakers": "penn"
+    "pennsylvania quakers": "penn",
+    "csu fullerton titans": "cal st. fullerton",
+    "csu fullerton": "cal st. fullerton",
+    "cal state fullerton titans": "cal st. fullerton",
+    "csu bakersfield roadrunners": "cal st. bakersfield",
+    "csu bakersfield": "cal st. bakersfield",
+    "csu northridge matadors": "cal st. northridge",
+    "csu northridge": "cal st. northridge",
+    "iupui jaguars": "iu indy",
+    "iupui": "iu indy",
+    "n colorado bears": "northern colorado",
+    "n colorado": "northern colorado"
 
 }
 
