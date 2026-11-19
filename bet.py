@@ -876,6 +876,9 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
     
        
     for game in games:
+        if not game.get("bookmakers"):
+            continue
+
         home_team = game.get("home_team", "Home Team")
         away_team = game.get("away_team", "Away Team")
         
