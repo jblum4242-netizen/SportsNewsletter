@@ -122,10 +122,22 @@ NCAAB_ALIASES = {
     "csu bakersfield": "cal st. bakersfield",
     "csu northridge matadors": "cal st. northridge",
     "csu northridge": "cal st. northridge",
+    "csu northridge matadors": "csun",
+    "csu northridge": "csun",
+    "cal state northridge matadors": "csun",
+    "cal st. northridge matadors": "csun",
+    "csun matadors": "csun",
     "iupui jaguars": "iu indy",
     "iupui": "iu indy",
+    "mississippi valley st delta devils": "mississippi valley st.",
+    "mississippi valley state delta devils": "mississippi valley st.",
+    "miss valley st delta devils": "mississippi valley st.",
+    "miss valley state delta devils": "mississippi valley st.",
+    "mississippi valley st": "mississippi valley st.",
+    "mississippi valley state": "mississippi valley st.",
     "n colorado bears": "northern colorado",
     "n colorado": "northern colorado"
+
 
 }
 
