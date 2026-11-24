@@ -44,6 +44,9 @@ def log_step(label, step_start=None):
         print(f"▶️ [{now_str}] {label}")
     return time.time()
 
+def get_sports_date(dt):
+    """Treats games tipping off between 12:00 AM and 2:59 AM ET as part of the current night's slate."""
+    return (dt - datetime.timedelta(hours=3)).date()
 
 
 def get_active_leagues():
@@ -868,7 +871,7 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
 
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
-    today_date = now_eastern.date()
+    today_date = get_sports_date(now_eastern)
     future_limit = now_eastern + datetime.timedelta(days=7)
 
     t_inj_total = 0.0
@@ -940,8 +943,8 @@ def parse_game_metrics(games, covers_data, tv_data, su_data, ats_data, league, g
                 if today_date.month > 9 or (today_date.month == 9 and today_date.day >= 15):
                     future_leagues.append("MLB")
                     
-                if local_dt.date() != today_date and league.upper() not in future_leagues: 
-                    continue  
+                if get_sports_date(local_dt) != today_date and league.upper() not in future_leagues:
+                    continue 
                 
                 formatted_date = local_dt.strftime("%A, %b %d")
                 formatted_time = local_dt.strftime("%I:%M %p ET")
@@ -1499,7 +1502,7 @@ def build_sports_briefings():
 
     eastern_tz = ZoneInfo("America/New_York")
     now_eastern = datetime.datetime.now(eastern_tz)
-    today_date = now_eastern.date()
+    today_date = get_sports_date(now_eastern)
     future_limit = now_eastern + datetime.timedelta(days=7)
     
     league_slates = {} 
@@ -1646,11 +1649,11 @@ def build_sports_briefings():
             })
 
     # Filter Today's Games (Excluding NHL to reduce noise)
-    today_games = [g for g in all_monitored_games if g['game_datetime'].date() == today_date and g['league'].upper() != "NHL"]
+    today_games = [g for g in all_monitored_games if get_sports_date(g['game_datetime']) == today_date and g['league'].upper() != "NHL"]
     today_table_html = render_calendar_table(today_games, show_league_badge=True, global_stats=global_stats)
     log_step("DONE: Fetching Live ESPN Scores & Today's Schedule", t_sched)
 
-# ---------------------------------------------------------
+    # ---------------------------------------------------------
     # 3. BUILD LEAGUE TABS (Schedule + Matchup Cards)
     # ---------------------------------------------------------
 
@@ -1880,7 +1883,7 @@ def build_sports_briefings():
             # Restrict NHL and NBA to today's date only
             league_schedule_games = [
                 g for g in all_monitored_games 
-                if g['league'].upper() == league.upper() and g['game_datetime'].date() == today_date
+                if g['league'].upper() == league.upper() and get_sports_date(g['game_datetime']) == today_date
             ]
             days_label = "Today"
         else:
