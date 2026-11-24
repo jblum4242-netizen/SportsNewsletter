@@ -559,7 +559,8 @@ def filter_college_games(odds_games, league, global_stats=None):
     modifiers = [
         "eastern", "western", "central", "northern", "southern", "gulf", "middle", 
         "state", "st.", "st", "tech", "a&m", "ohio", "oh", "north", "south", 
-        "east", "west", "pine bluff", "cal", "christian", "atlantic", "arkansas",
+        "east", "west", "n", "s", "e", "w", "ne", "nw", "se", "sw",
+        "pine bluff", "cal", "christian", "atlantic", "arkansas",
         "corpus christi", "little rock", "monroe", "lafayette", "arlington", "san antonio", "el paso",
         "int'l", "intl", "international"
     ]
@@ -602,8 +603,8 @@ def filter_college_games(odds_games, league, global_stats=None):
         game['away_rank'] = away_rank_str
         game['home_rank'] = home_rank_str
             
-        # Rule 1: Always include Delaware
-        if "delaware" in away or "delaware" in home:
+        # Rule 1: Always include Delaware (without matching Delaware State)
+        if is_clean_school_match("delaware", away) or is_clean_school_match("delaware", home):
             filtered_games.append(game)
             continue
             
