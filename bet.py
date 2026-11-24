@@ -771,7 +771,15 @@ def build_xg_form_html(team_name, xg_data, metrics=None):
     metrics_str = ""
     if metrics:
         luck_color = "#38a169" if metrics['luck'] >= 0 else "#e53e3e"
-        metrics_str = f" | <span style='font-size: 10px; color: #4a5568;'>PPDA Press: <b>{metrics['ppda']:.1f}</b> | xPts Luck: <b style='color: {luck_color};'>{metrics['luck']:+.1f}</b></span>"
+        xg = metrics.get('xg', 0.0)
+        xga = metrics.get('xga', 0.0)
+        xg_diff = metrics.get('xg_diff', xg - xga)
+        xgd_color = "#38a169" if xg_diff >= 0 else "#e53e3e"
+        metrics_str = (
+            f" | <span style='font-size: 10px; color: #4a5568;'>"
+            f"Season xG/xGA: <b>{xg:.1f}-{xga:.1f}</b> (<b style='color: {xgd_color};'>{xg_diff:+.1f}</b>) | "
+            f"xPts Luck: <b style='color: {luck_color};'>{metrics['luck']:+.1f}</b></span>"
+        )
         
     html = f"<div style='margin-top: 10px; margin-bottom: 10px;'>"
     html += f"<strong style='font-size: 12px; color: #2d3748;'>{team_name} - Last 5 (Advanced xG):</strong><span style='font-size: 11px; color: #718096; font-weight: bold;'>{record_str}</span>{metrics_str}"
